@@ -1,25 +1,22 @@
-# macOS
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
 .DS_Store
-.AppleDouble
-.LSOverride
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
 
-# 编辑器
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# 日志与临时文件
-*.log
-*.tmp
-tmp/
-temp/
-
-# 依赖与构建产物（按需调整）
-node_modules/
-dist/
-build/
-__pycache__/
-*.py[cod]
-.venv/
-venv/
+# 本地密钥 / 配置（切勿提交）
+*.keystore
+*.jks
+keystore.properties
+secrets.properties
+.env
