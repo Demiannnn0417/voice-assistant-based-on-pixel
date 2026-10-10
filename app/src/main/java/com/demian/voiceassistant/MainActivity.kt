@@ -34,6 +34,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.demian.voiceassistant.asr.SpeechRecognizerManager
+import com.demian.voiceassistant.agent.CommandRouter
+import com.demian.voiceassistant.phone.PhoneInfoProvider
 import com.demian.voiceassistant.tts.TtsManager
 import com.demian.voiceassistant.ui.theme.VoiceAssistantTheme
 
@@ -57,6 +59,7 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
 
     val tts = remember { TtsManager(context) }
     val asr = remember { SpeechRecognizerManager(context) }
+    val router = remember { CommandRouter(PhoneInfoProvider(context)) }
     DisposableEffect(Unit) {
         onDispose {
             tts.shutdown()
@@ -66,6 +69,7 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
 
     var status by mutableStateOf("待机")
     var result by mutableStateOf("")
+    var answer by mutableStateOf("")
     var listening by mutableStateOf(false)
 
     fun startListening() {
@@ -83,7 +87,10 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
 
             override fun onFinal(text: String) {
                 result = text
+                val reply = router.route(text)
+                answer = reply ?: "这个我暂时还不会，接入大模型后就能回答啦。"
                 status = "识别完成"
+                if (answer.isNotBlank()) tts.speak(answer)
             }
 
             override fun onError(error: Int) {
@@ -154,6 +161,15 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
                 modifier = Modifier.padding(16.dp),
                 style = MaterialTheme.typography.bodyLarge
             )
+        }
+
+        if (answer.isNotBlank()) {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("助手回答", style = MaterialTheme.typography.labelMedium)
+                    Text(answer, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
         }
 
         Button(
