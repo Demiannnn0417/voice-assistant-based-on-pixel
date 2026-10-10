@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 录音（语音识别/唤醒词需要） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- 联网（云端大模型、在线语音识别需要） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

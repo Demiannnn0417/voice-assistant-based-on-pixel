@@ -1,20 +1,25 @@
 package com.demian.voiceassistant
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import com.demian.voiceassistant.asr.SpeechRecognizerManager
 import com.demian.voiceassistant.tts.TtsManager
 import com.demian.voiceassistant.ui.theme.VoiceAssistantTheme
 
@@ -37,7 +44,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             VoiceAssistantTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    TtsScreen(modifier = Modifier.padding(innerPadding))
+                    AssistantScreen(modifier = Modifier.padding(innerPadding))
                 }
             }
         }
@@ -45,65 +52,138 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun TtsScreen(modifier: Modifier = Modifier) {
+fun AssistantScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
 
-    // remember：只在第一次组合时创建，重组时复用
     val tts = remember { TtsManager(context) }
-    // 页面销毁时释放 TTS 资源
+    val asr = remember { SpeechRecognizerManager(context) }
     DisposableEffect(Unit) {
-        onDispose { tts.shutdown() }
+        onDispose {
+            tts.shutdown()
+            asr.destroy()
+        }
     }
 
-    var input by mutableStateOf("你好，我是你的语音助手")
+    var status by mutableStateOf("待机")
+    var result by mutableStateOf("")
+    var listening by mutableStateOf(false)
+
+    fun startListening() {
+        listening = true
+        status = "正在聆听…"
+        result = ""
+        asr.start(object : SpeechRecognizerManager.Callback {
+            override fun onReady() {
+                status = "请说话…"
+            }
+
+            override fun onPartial(text: String) {
+                result = text
+            }
+
+            override fun onFinal(text: String) {
+                result = text
+                status = "识别完成"
+            }
+
+            override fun onError(error: Int) {
+                status = "识别出错：${describeAsrError(error)}"
+            }
+
+            override fun onEnd() {
+                listening = false
+            }
+        })
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            startListening()
+        } else {
+            status = "需要麦克风权限才能识别语音"
+        }
+    }
+
+    fun onMicClick() {
+        val granted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            startListening()
+        } else {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "阶段 2 · 语音播报测试",
+            text = "语音助手 · 阶段 3（听 + 说）",
             style = MaterialTheme.typography.titleLarge
         )
 
-        OutlinedTextField(
-            value = input,
-            onValueChange = { input = it },
-            label = { Text("输入要播报的文字") },
-            modifier = Modifier.fillMaxWidth()
-        )
+        Text(text = "状态：$status", style = MaterialTheme.typography.bodyMedium)
 
         Button(
-            onClick = { tts.speak(input) },
+            onClick = { onMicClick() },
+            enabled = !listening,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("🔊 播报")
+            Text(if (listening) "🎙 聆听中…" else "🎤 开始聆听")
         }
 
-        Spacer(Modifier.height(8.dp))
-
-        Text("快捷测试：", style = MaterialTheme.typography.labelLarge)
-        listOf(
-            "现在是几点？",
-            "你好，我在听。",
-            "这是一段中文语音合成测试。"
-        ).forEach { sample ->
+        if (listening) {
             OutlinedButton(
-                onClick = { tts.speak(sample) },
+                onClick = { asr.stop() },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(sample)
+                Text("⏹ 我说完了")
             }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = if (result.isBlank()) "（识别结果会显示在这里）" else result,
+                modifier = Modifier.padding(16.dp),
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
+
+        Button(
+            onClick = { tts.speak(result) },
+            enabled = result.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("🔊 播报识别结果")
         }
     }
 }
 
+/** 把 SpeechRecognizer 的错误码翻译成人话。 */
+private fun describeAsrError(error: Int): String = when (error) {
+    SpeechRecognizer.ERROR_AUDIO -> "录音错误"
+    SpeechRecognizer.ERROR_CLIENT -> "客户端错误"
+    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺少权限"
+    SpeechRecognizer.ERROR_NETWORK -> "网络错误"
+    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "网络超时"
+    SpeechRecognizer.ERROR_NO_MATCH -> "没有识别到内容"
+    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别服务忙"
+    SpeechRecognizer.ERROR_SERVER -> "服务器错误"
+    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "未检测到说话"
+    else -> "未知错误($error)"
+}
+
 @Preview(showBackground = true)
 @Composable
-fun TtsScreenPreview() {
+fun AssistantScreenPreview() {
     VoiceAssistantTheme {
-        TtsScreen()
+        AssistantScreen()
     }
 }
