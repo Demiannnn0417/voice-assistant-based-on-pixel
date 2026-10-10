@@ -1,5 +1,6 @@
 package com.demian.voiceassistant.agent
 
+import com.demian.voiceassistant.knowledge.KnowledgeRetriever
 import com.demian.voiceassistant.llm.ChatMessage
 import com.demian.voiceassistant.llm.DeepSeekClient
 import com.demian.voiceassistant.phone.PhoneInfoProvider
@@ -10,11 +11,13 @@ import com.demian.voiceassistant.phone.PhoneInfoProvider
  * 处理顺序：
  *  1. 先走 [CommandRouter]（本地、离线、即时）——时间/日期/电量等；
  *  2. 命中不了再交给 [DeepSeekClient] 大模型。
+ *  大模型回答前，会先从 [KnowledgeRetriever] 取回相关片段作为参考资料。
  */
 class AssistantAgent(
     private val router: CommandRouter,
     private val llm: DeepSeekClient,
-    private val phone: PhoneInfoProvider
+    private val phone: PhoneInfoProvider,
+    private val retriever: KnowledgeRetriever
 ) {
 
     suspend fun respond(userText: String): String {
@@ -24,11 +27,12 @@ class AssistantAgent(
         // 1. 本地命令
         router.route(text)?.let { return it }
 
-        // 2. 大模型
+        // 2. 大模型（先从知识库取回相关片段作为参考资料）
+        val knowledge = retriever.search(text)
         return try {
             llm.chat(
                 listOf(
-                    ChatMessage("system", systemPrompt()),
+                    ChatMessage("system", systemPrompt(knowledge)),
                     ChatMessage("user", text)
                 )
             )
@@ -37,10 +41,17 @@ class AssistantAgent(
         }
     }
 
-    private fun systemPrompt(): String = buildString {
+    private fun systemPrompt(knowledge: List<String>): String = buildString {
         append("你是一个运行在安卓手机上的语音助手，用户会用中文和你交流。")
         append("回答要简洁、口语化，通常一两句话，方便朗读出来。")
         append("下面是手机的实时信息，回答相关问题时可直接使用：")
         append("【${phone.time()}】【${phone.date()}】【${phone.battery()}】")
+        if (knowledge.isNotEmpty()) {
+            append("\n\n下面是来自本地知识库的参考资料，请优先依据它回答；")
+            append("如果资料里没有相关信息，就如实说不知道，不要编造：\n")
+            knowledge.forEachIndexed { index, chunk ->
+                append("资料${index + 1}：").append(chunk).append('\n')
+            }
+        }
     }
 }

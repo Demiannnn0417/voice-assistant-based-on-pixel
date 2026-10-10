@@ -40,6 +40,9 @@ import com.demian.voiceassistant.agent.AssistantAgent
 import com.demian.voiceassistant.agent.CommandRouter
 import com.demian.voiceassistant.asr.SpeechRecognizerManager
 import com.demian.voiceassistant.data.SettingsStore
+import com.demian.voiceassistant.knowledge.KnowledgeImporter
+import com.demian.voiceassistant.knowledge.KnowledgeRetriever
+import com.demian.voiceassistant.knowledge.KnowledgeStore
 import com.demian.voiceassistant.llm.DeepSeekClient
 import com.demian.voiceassistant.phone.PhoneInfoProvider
 import com.demian.voiceassistant.tts.TtsManager
@@ -69,8 +72,10 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
     val asr = remember { SpeechRecognizerManager(context) }
     val settings = remember { SettingsStore(context) }
     val phone = remember { PhoneInfoProvider(context) }
+    val knowledge = remember { KnowledgeStore(context) }
+    val retriever = remember { KnowledgeRetriever(knowledge) }
     val agent = remember {
-        AssistantAgent(CommandRouter(phone), DeepSeekClient(settings), phone)
+        AssistantAgent(CommandRouter(phone), DeepSeekClient(settings), phone, retriever)
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -84,6 +89,7 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
     var answer by mutableStateOf("")
     var listening by mutableStateOf(false)
     var apiKeyInput by remember { mutableStateOf(settings.deepSeekApiKey) }
+    var docCount by remember { mutableStateOf(knowledge.chunkCount()) }
 
     fun handleCommand(command: String) {
         status = "思考中…"
@@ -132,6 +138,19 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
             startListening()
         } else {
             status = "需要麦克风权限才能识别语音"
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            status = "正在导入…"
+            scope.launch {
+                val n = KnowledgeImporter.import(context, knowledge, uri)
+                docCount = knowledge.chunkCount()
+                status = if (n > 0) "已导入 $n 个片段" else "文件为空或读取失败"
+            }
         }
     }
 
@@ -223,6 +242,28 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("💾 保存 Key")
+        }
+
+        Text("本地知识库", style = MaterialTheme.typography.titleMedium)
+
+        Text("已导入 $docCount 个片段", style = MaterialTheme.typography.bodyMedium)
+
+        Button(
+            onClick = { importLauncher.launch(arrayOf("text/*")) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("📄 导入文本文件（.txt / .md）")
+        }
+
+        OutlinedButton(
+            onClick = {
+                knowledge.clear()
+                docCount = 0
+                status = "已清空知识库"
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("🗑 清空知识库")
         }
     }
 }
