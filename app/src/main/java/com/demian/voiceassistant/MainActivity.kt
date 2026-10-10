@@ -1,11 +1,10 @@
 package com.demian.voiceassistant
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -28,7 +27,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,18 +40,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.demian.voiceassistant.agent.AssistantAgent
-import com.demian.voiceassistant.agent.CommandRouter
-import com.demian.voiceassistant.asr.SpeechRecognizerManager
 import com.demian.voiceassistant.data.SettingsStore
 import com.demian.voiceassistant.knowledge.KnowledgeImporter
-import com.demian.voiceassistant.knowledge.KnowledgeRetriever
 import com.demian.voiceassistant.knowledge.KnowledgeStore
-import com.demian.voiceassistant.llm.DeepSeekClient
-import com.demian.voiceassistant.phone.PhoneInfoProvider
-import com.demian.voiceassistant.tts.TtsManager
+import com.demian.voiceassistant.service.AssistantState
+import com.demian.voiceassistant.service.WakeWordService
 import com.demian.voiceassistant.ui.theme.VoiceAssistantTheme
-import com.demian.voiceassistant.wake.WakeWordDetector
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -73,144 +66,88 @@ class MainActivity : ComponentActivity() {
 fun AssistantScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
-    val tts = remember { TtsManager(context) }
-    val asr = remember { SpeechRecognizerManager(context) }
-    val detector = remember { WakeWordDetector(context) }
     val settings = remember { SettingsStore(context) }
-    val phone = remember { PhoneInfoProvider(context) }
     val knowledge = remember { KnowledgeStore(context) }
-    val retriever = remember { KnowledgeRetriever(knowledge) }
-    val agent = remember {
-        AssistantAgent(CommandRouter(phone), DeepSeekClient(settings), phone, retriever)
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            detector.stop()
-            tts.shutdown()
-            asr.destroy()
-        }
-    }
 
-    var status by mutableStateOf("待机")
-    var result by mutableStateOf("")
-    var answer by mutableStateOf("")
-    var listening by mutableStateOf(false)
-    var wakeEnabled by mutableStateOf(false)
+    val status by AssistantState.status.collectAsState()
+    val heard by AssistantState.heard.collectAsState()
+    val answer by AssistantState.answer.collectAsState()
+    val running by AssistantState.running.collectAsState()
+
     var apiKeyInput by remember { mutableStateOf(settings.deepSeekApiKey) }
     var docCount by remember { mutableStateOf(knowledge.chunkCount()) }
 
-    fun handleCommand(command: String) {
-        status = "思考中…"
-        scope.launch {
-            val reply = agent.respond(command)
-            answer = reply
-            status = "完成"
-            if (reply.isNotBlank()) tts.speak(reply)
-        }
-    }
-
-    fun startListening() {
-        if (listening) return
-        listening = true
-        status = "正在聆听…"
-        result = ""
-        answer = ""
-        asr.start(object : SpeechRecognizerManager.Callback {
-            override fun onReady() {
-                status = "请说话…"
-            }
-
-            override fun onPartial(text: String) {
-                result = text
-            }
-
-            override fun onFinal(text: String) {
-                result = text
-                listening = false
-                handleCommand(text)
-            }
-
-            override fun onError(error: Int) {
-                status = "识别出错：${describeAsrError(error)}"
-            }
-
-            override fun onEnd() {
-                listening = false
-            }
-        })
-    }
-
-    // 唤醒词命中（在后台线程回调，切回主线程）
-    fun onWake(keyword: String) {
-        mainHandler.post {
-            if (!wakeEnabled || listening) return@post
-            status = "已唤醒：$keyword"
-            tts.speak("在")
-            startListening()
-        }
-    }
-
-    // 常驻唤醒：当「开启唤醒且未在识别」时监听，其余情况释放麦克风
-    DisposableEffect(wakeEnabled, listening) {
-        if (wakeEnabled && !listening) {
-            detector.start { keyword -> onWake(keyword) }
-        }
-        onDispose { detector.stop() }
-    }
-
-    fun hasMicPermission(): Boolean = ContextCompat.checkSelfPermission(
+    fun hasMic(): Boolean = ContextCompat.checkSelfPermission(
         context, Manifest.permission.RECORD_AUDIO
     ) == PackageManager.PERMISSION_GRANTED
 
-    val micPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            startListening()
-        } else {
-            status = "需要麦克风权限才能识别语音"
-        }
+    fun startWakeService() {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, WakeWordService::class.java)
+                .setAction(WakeWordService.ACTION_START_WAKE)
+        )
     }
 
-    val wakePermissionLauncher = rememberLauncherForActivityResult(
+    fun stopWakeService() {
+        context.startService(
+            Intent(context, WakeWordService::class.java)
+                .setAction(WakeWordService.ACTION_STOP)
+        )
+    }
+
+    fun listenNow() {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, WakeWordService::class.java)
+                .setAction(WakeWordService.ACTION_LISTEN_NOW)
+        )
+    }
+
+    val micLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) {
-            wakeEnabled = true
-        } else {
-            status = "需要麦克风权限才能开启唤醒"
+        if (granted) startWakeService()
+        else AssistantState.status.value = "需要麦克风权限才能开启唤醒"
+    }
+
+    val notifLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { startWakeService() }
+
+    fun enableWake() {
+        if (!hasMic()) {
+            micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        startWakeService()
+    }
+
+    val micLauncherListen = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) listenNow()
+        else AssistantState.status.value = "需要麦克风权限才能识别语音"
     }
 
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            status = "正在导入…"
             scope.launch {
                 val n = KnowledgeImporter.import(context, knowledge, uri)
                 docCount = knowledge.chunkCount()
-                status = if (n > 0) "已导入 $n 个片段" else "文件为空或读取失败"
+                AssistantState.status.value =
+                    if (n > 0) "已导入 $n 个片段" else "文件为空或读取失败"
             }
-        }
-    }
-
-    fun onMicClick() {
-        if (hasMicPermission()) {
-            startListening()
-        } else {
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
-
-    fun onWakeToggle(enable: Boolean) {
-        if (enable && !hasMicPermission()) {
-            wakePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        } else {
-            wakeEnabled = enable
-            status = if (enable) "已开启常驻唤醒，说「你好小明」" else "已关闭常驻唤醒"
         }
     }
 
@@ -221,11 +158,7 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = "语音助手 · 阶段 4（唤醒词）",
-            style = MaterialTheme.typography.titleLarge
-        )
-
+        Text(text = "语音助手", style = MaterialTheme.typography.titleLarge)
         Text(text = "状态：$status", style = MaterialTheme.typography.bodyMedium)
 
         Row(
@@ -233,32 +166,36 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("常驻唤醒（说「你好小明」）")
-            Switch(checked = wakeEnabled, onCheckedChange = { onWakeToggle(it) })
+            Column(Modifier.weight(1f)) {
+                Text("常驻唤醒（后台/息屏可用）")
+                Text(
+                    "唤醒词：你好小楠",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Switch(
+                checked = running,
+                onCheckedChange = { checked ->
+                    if (checked) enableWake() else stopWakeService()
+                }
+            )
         }
 
         Button(
-            onClick = { onMicClick() },
-            enabled = !listening,
+            onClick = {
+                if (hasMic()) listenNow()
+                else micLauncherListen.launch(Manifest.permission.RECORD_AUDIO)
+            },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (listening) "🎙 聆听中…" else "🎤 开始聆听")
-        }
-
-        if (listening) {
-            OutlinedButton(
-                onClick = { asr.stop() },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("⏹ 我说完了")
-            }
+            Text("🎤 立刻聆听一次")
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("你说", style = MaterialTheme.typography.labelMedium)
                 Text(
-                    text = if (result.isBlank()) "（识别结果显示在这里）" else result,
+                    text = heard.ifBlank { "（识别结果显示在这里）" },
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
@@ -271,14 +208,6 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
                     Text(answer, style = MaterialTheme.typography.bodyLarge)
                 }
             }
-        }
-
-        OutlinedButton(
-            onClick = { if (answer.isNotBlank() || result.isNotBlank()) tts.speak(answer.ifBlank { result }) },
-            enabled = answer.isNotBlank() || result.isNotBlank(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("🔊 重播")
         }
 
         Text("设置", style = MaterialTheme.typography.titleMedium)
@@ -295,7 +224,8 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
         Button(
             onClick = {
                 settings.deepSeekApiKey = apiKeyInput
-                status = if (apiKeyInput.isBlank()) "已清空 API Key" else "已保存 API Key"
+                AssistantState.status.value =
+                    if (apiKeyInput.isBlank()) "已清空 API Key" else "已保存 API Key"
             },
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -303,7 +233,6 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
         }
 
         Text("本地知识库", style = MaterialTheme.typography.titleMedium)
-
         Text("已导入 $docCount 个片段", style = MaterialTheme.typography.bodyMedium)
 
         Button(
@@ -317,27 +246,13 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
             onClick = {
                 knowledge.clear()
                 docCount = 0
-                status = "已清空知识库"
+                AssistantState.status.value = "已清空知识库"
             },
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("🗑 清空知识库")
         }
     }
-}
-
-/** 把 SpeechRecognizer 的错误码翻译成人话。 */
-private fun describeAsrError(error: Int): String = when (error) {
-    SpeechRecognizer.ERROR_AUDIO -> "录音错误"
-    SpeechRecognizer.ERROR_CLIENT -> "客户端错误"
-    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "缺少权限"
-    SpeechRecognizer.ERROR_NETWORK -> "网络错误"
-    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "网络超时"
-    SpeechRecognizer.ERROR_NO_MATCH -> "没有识别到内容"
-    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "识别服务忙"
-    SpeechRecognizer.ERROR_SERVER -> "服务器错误"
-    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "未检测到说话"
-    else -> "未知错误($error)"
 }
 
 @Preview(showBackground = true)
