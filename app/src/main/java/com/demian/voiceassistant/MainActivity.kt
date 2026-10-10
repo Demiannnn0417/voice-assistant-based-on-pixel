@@ -3,6 +3,8 @@ package com.demian.voiceassistant
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -11,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -30,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -47,6 +52,7 @@ import com.demian.voiceassistant.llm.DeepSeekClient
 import com.demian.voiceassistant.phone.PhoneInfoProvider
 import com.demian.voiceassistant.tts.TtsManager
 import com.demian.voiceassistant.ui.theme.VoiceAssistantTheme
+import com.demian.voiceassistant.wake.WakeWordDetector
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -67,9 +73,11 @@ class MainActivity : ComponentActivity() {
 fun AssistantScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
 
     val tts = remember { TtsManager(context) }
     val asr = remember { SpeechRecognizerManager(context) }
+    val detector = remember { WakeWordDetector(context) }
     val settings = remember { SettingsStore(context) }
     val phone = remember { PhoneInfoProvider(context) }
     val knowledge = remember { KnowledgeStore(context) }
@@ -79,6 +87,7 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
     }
     DisposableEffect(Unit) {
         onDispose {
+            detector.stop()
             tts.shutdown()
             asr.destroy()
         }
@@ -88,6 +97,7 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
     var result by mutableStateOf("")
     var answer by mutableStateOf("")
     var listening by mutableStateOf(false)
+    var wakeEnabled by mutableStateOf(false)
     var apiKeyInput by remember { mutableStateOf(settings.deepSeekApiKey) }
     var docCount by remember { mutableStateOf(knowledge.chunkCount()) }
 
@@ -102,6 +112,7 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
     }
 
     fun startListening() {
+        if (listening) return
         listening = true
         status = "正在聆听…"
         result = ""
@@ -131,13 +142,45 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
         })
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
+    // 唤醒词命中（在后台线程回调，切回主线程）
+    fun onWake(keyword: String) {
+        mainHandler.post {
+            if (!wakeEnabled || listening) return@post
+            status = "已唤醒：$keyword"
+            tts.speak("在")
+            startListening()
+        }
+    }
+
+    // 常驻唤醒：当「开启唤醒且未在识别」时监听，其余情况释放麦克风
+    DisposableEffect(wakeEnabled, listening) {
+        if (wakeEnabled && !listening) {
+            detector.start { keyword -> onWake(keyword) }
+        }
+        onDispose { detector.stop() }
+    }
+
+    fun hasMicPermission(): Boolean = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.RECORD_AUDIO
+    ) == PackageManager.PERMISSION_GRANTED
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
             startListening()
         } else {
             status = "需要麦克风权限才能识别语音"
+        }
+    }
+
+    val wakePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            wakeEnabled = true
+        } else {
+            status = "需要麦克风权限才能开启唤醒"
         }
     }
 
@@ -155,13 +198,19 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
     }
 
     fun onMicClick() {
-        val granted = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-        if (granted) {
+        if (hasMicPermission()) {
             startListening()
         } else {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    fun onWakeToggle(enable: Boolean) {
+        if (enable && !hasMicPermission()) {
+            wakePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            wakeEnabled = enable
+            status = if (enable) "已开启常驻唤醒，说「你好小明」" else "已关闭常驻唤醒"
         }
     }
 
@@ -173,11 +222,20 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "语音助手 · 阶段 5（接入 DeepSeek）",
+            text = "语音助手 · 阶段 4（唤醒词）",
             style = MaterialTheme.typography.titleLarge
         )
 
         Text(text = "状态：$status", style = MaterialTheme.typography.bodyMedium)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("常驻唤醒（说「你好小明」）")
+            Switch(checked = wakeEnabled, onCheckedChange = { onWakeToggle(it) })
+        }
 
         Button(
             onClick = { onMicClick() },
@@ -216,8 +274,8 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
         }
 
         OutlinedButton(
-            onClick = { if (result.isNotBlank()) tts.speak(answer.ifBlank { result }) },
-            enabled = result.isNotBlank(),
+            onClick = { if (answer.isNotBlank() || result.isNotBlank()) tts.speak(answer.ifBlank { result }) },
+            enabled = answer.isNotBlank() || result.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("🔊 重播")
