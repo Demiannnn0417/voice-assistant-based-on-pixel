@@ -20,6 +20,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,17 +28,23 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.demian.voiceassistant.asr.SpeechRecognizerManager
+import com.demian.voiceassistant.agent.AssistantAgent
 import com.demian.voiceassistant.agent.CommandRouter
+import com.demian.voiceassistant.asr.SpeechRecognizerManager
+import com.demian.voiceassistant.data.SettingsStore
+import com.demian.voiceassistant.llm.DeepSeekClient
 import com.demian.voiceassistant.phone.PhoneInfoProvider
 import com.demian.voiceassistant.tts.TtsManager
 import com.demian.voiceassistant.ui.theme.VoiceAssistantTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -56,10 +63,15 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AssistantScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     val tts = remember { TtsManager(context) }
     val asr = remember { SpeechRecognizerManager(context) }
-    val router = remember { CommandRouter(PhoneInfoProvider(context)) }
+    val settings = remember { SettingsStore(context) }
+    val phone = remember { PhoneInfoProvider(context) }
+    val agent = remember {
+        AssistantAgent(CommandRouter(phone), DeepSeekClient(settings), phone)
+    }
     DisposableEffect(Unit) {
         onDispose {
             tts.shutdown()
@@ -71,11 +83,23 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
     var result by mutableStateOf("")
     var answer by mutableStateOf("")
     var listening by mutableStateOf(false)
+    var apiKeyInput by remember { mutableStateOf(settings.deepSeekApiKey) }
+
+    fun handleCommand(command: String) {
+        status = "思考中…"
+        scope.launch {
+            val reply = agent.respond(command)
+            answer = reply
+            status = "完成"
+            if (reply.isNotBlank()) tts.speak(reply)
+        }
+    }
 
     fun startListening() {
         listening = true
         status = "正在聆听…"
         result = ""
+        answer = ""
         asr.start(object : SpeechRecognizerManager.Callback {
             override fun onReady() {
                 status = "请说话…"
@@ -87,10 +111,8 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
 
             override fun onFinal(text: String) {
                 result = text
-                val reply = router.route(text)
-                answer = reply ?: "这个我暂时还不会，接入大模型后就能回答啦。"
-                status = "识别完成"
-                if (answer.isNotBlank()) tts.speak(answer)
+                listening = false
+                handleCommand(text)
             }
 
             override fun onError(error: Int) {
@@ -132,7 +154,7 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "语音助手 · 阶段 3（听 + 说）",
+            text = "语音助手 · 阶段 5（接入 DeepSeek）",
             style = MaterialTheme.typography.titleLarge
         )
 
@@ -156,11 +178,13 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = if (result.isBlank()) "（识别结果会显示在这里）" else result,
-                modifier = Modifier.padding(16.dp),
-                style = MaterialTheme.typography.bodyLarge
-            )
+            Column(Modifier.padding(16.dp)) {
+                Text("你说", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    text = if (result.isBlank()) "（识别结果显示在这里）" else result,
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
         }
 
         if (answer.isNotBlank()) {
@@ -172,12 +196,33 @@ fun AssistantScreen(modifier: Modifier = Modifier) {
             }
         }
 
-        Button(
-            onClick = { tts.speak(result) },
+        OutlinedButton(
+            onClick = { if (result.isNotBlank()) tts.speak(answer.ifBlank { result }) },
             enabled = result.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("🔊 播报识别结果")
+            Text("🔊 重播")
+        }
+
+        Text("设置", style = MaterialTheme.typography.titleMedium)
+
+        OutlinedTextField(
+            value = apiKeyInput,
+            onValueChange = { apiKeyInput = it },
+            label = { Text("DeepSeek API Key") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Button(
+            onClick = {
+                settings.deepSeekApiKey = apiKeyInput
+                status = if (apiKeyInput.isBlank()) "已清空 API Key" else "已保存 API Key"
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("💾 保存 Key")
         }
     }
 }
