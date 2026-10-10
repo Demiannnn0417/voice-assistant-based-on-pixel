@@ -4,33 +4,20 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 主题图标（Android 13+ 单色层，系统会统一着色） -->
-    <path
-        android:pathData="M33,47 Q23,55 33,63"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4"
-        android:strokeLineCap="round" />
-    <path
-        android:pathData="M75,47 Q85,55 75,63"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4"
-        android:strokeLineCap="round" />
+    <!-- 主题单色层（Android 13+，系统统一着色） -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M46,44 a8,8 0 0 1 16,0 v13 a8,8 0 0 1 -16,0 z" />
+        android:pathData="M23.5,49.5 a4.5,4.5 0 0 1 9,0 v9 a4.5,4.5 0 0 1 -9,0 z" />
     <path
-        android:pathData="M38,53 C38,74 70,74 70,53"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4"
-        android:strokeLineCap="round" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M36.5,43.5 a4.5,4.5 0 0 1 9,0 v21 a4.5,4.5 0 0 1 -9,0 z" />
     <path
-        android:pathData="M54,68 v8"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4"
-        android:strokeLineCap="round" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M49.5,36.5 a4.5,4.5 0 0 1 9,0 v35 a4.5,4.5 0 0 1 -9,0 z" />
     <path
-        android:pathData="M45,78 h18"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="4"
-        android:strokeLineCap="round" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M62.5,43.5 a4.5,4.5 0 0 1 9,0 v21 a4.5,4.5 0 0 1 -9,0 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M75.5,49.5 a4.5,4.5 0 0 1 9,0 v9 a4.5,4.5 0 0 1 -9,0 z" />
 </vector>
