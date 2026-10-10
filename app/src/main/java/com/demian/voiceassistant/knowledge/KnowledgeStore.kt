@@ -69,6 +69,19 @@ class KnowledgeStore(context: Context) :
         return 0
     }
 
+    /** 按来源文件分组，返回 (文件名, 片段数) 列表。 */
+    fun sources(): List<Pair<String, Int>> {
+        val result = mutableListOf<Pair<String, Int>>()
+        readableDatabase.rawQuery(
+            "SELECT source, COUNT(*) FROM $TABLE GROUP BY source ORDER BY source", null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result.add(cursor.getString(0) to cursor.getInt(1))
+            }
+        }
+        return result
+    }
+
     /** 清空知识库。 */
     fun clear() {
         writableDatabase.execSQL("DELETE FROM $TABLE")
