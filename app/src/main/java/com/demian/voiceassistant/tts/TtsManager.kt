@@ -1,6 +1,8 @@
 package com.demian.voiceassistant.tts
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
@@ -19,6 +21,7 @@ class TtsManager(context: Context) {
     private var ready = false
     private val pending = ArrayDeque<Pair<String, (() -> Unit)?>>()
     private val callbacks = ConcurrentHashMap<String, () -> Unit>()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     init {
         tts = TextToSpeech(context.applicationContext) { status ->
@@ -33,12 +36,12 @@ class TtsManager(context: Context) {
                     override fun onStart(utteranceId: String?) {}
 
                     override fun onDone(utteranceId: String?) {
-                        callbacks.remove(utteranceId)?.invoke()
+                        callbacks.remove(utteranceId)?.let { cb -> mainHandler.post(cb) }
                     }
 
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) {
-                        callbacks.remove(utteranceId)?.invoke()
+                        callbacks.remove(utteranceId)?.let { cb -> mainHandler.post(cb) }
                     }
                 })
                 ready = true

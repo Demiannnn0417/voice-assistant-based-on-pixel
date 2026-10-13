@@ -17,6 +17,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,6 +25,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +51,7 @@ fun SettingsScreen(
     var wakeWord by remember { mutableStateOf(settings.wakeWord) }
     var wakeMsg by remember { mutableStateOf("") }
     var wakeOk by remember { mutableStateOf(false) }
+    var continuous by remember { mutableStateOf(settings.continuousConversation) }
 
     Column(
         modifier = modifier
@@ -163,6 +166,30 @@ fun SettingsScreen(
             Text("🗑 清空对话记录")
         }
 
+        // --- 交互 ---
+        Text("交互", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("连续对话", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "回答后自动继续听下一句，说「结束」退出",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = continuous,
+                onCheckedChange = {
+                    continuous = it
+                    settings.continuousConversation = it
+                },
+            )
+        }
+
         Spacer(Modifier.height(8.dp))
 
         // --- 关于 ---
@@ -176,7 +203,7 @@ fun SettingsScreen(
                 InfoDivider()
                 InfoRow("对话模型", settings.deepSeekModel)
                 InfoDivider()
-                InfoRow("版本", "v1.2")
+                InfoRow("版本", "v1.3")
             }
         }
 

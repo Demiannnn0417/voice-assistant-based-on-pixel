@@ -21,6 +21,7 @@ import com.demian.voiceassistant.asr.SpeechRecognizerManager
 import com.demian.voiceassistant.data.ConversationStore
 import com.demian.voiceassistant.data.NotesStore
 import com.demian.voiceassistant.data.SettingsStore
+import com.demian.voiceassistant.feedback.Feedback
 import com.demian.voiceassistant.knowledge.KnowledgeRetriever
 import com.demian.voiceassistant.knowledge.KnowledgeStore
 import com.demian.voiceassistant.llm.DeepSeekClient
@@ -37,8 +38,8 @@ import kotlinx.coroutines.launch
 /**
  * 常驻前台服务：让 App 在后台/息屏也能被唤醒词唤醒。
  *
- * 职责：持有麦克风与自动化流程 —— 唤醒词检测 → 语音识别 → 助手回答 → 语音播报，
- * 播报结束后重新回到唤醒监听。界面只负责控制它并显示状态。
+ * 流程：唤醒词检测 →（提示音/震动）→ 语音识别 → 助手回答 → 语音播报
+ *      → 若开启「连续对话」则继续听下一句，否则回到唤醒监听。
  */
 class WakeWordService : Service() {
 
@@ -50,9 +51,13 @@ class WakeWordService : Service() {
     private lateinit var tts: TtsManager
     private lateinit var agent: AssistantAgent
     private lateinit var settings: SettingsStore
+    private lateinit var feedback: Feedback
 
     private var wakeMode = false
     private var listening = false
+
+    /** 连续对话中已进行的轮数。 */
+    private var turns = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -60,6 +65,7 @@ class WakeWordService : Service() {
         detector = WakeWordDetector(this)
         asr = SpeechRecognizerManager(this)
         tts = TtsManager(this)
+        feedback = Feedback(this)
         val phone = PhoneInfoProvider(this)
         agent = AssistantAgent(
             router = CommandRouter(phone),
@@ -80,14 +86,10 @@ class WakeWordService : Service() {
             return START_NOT_STICKY
         }
 
-        // 任何其他 action 都要先进前台，否则系统会杀
         startForeground(NOTIFICATION_ID, buildNotification())
 
         when (intent?.action) {
-            ACTION_LISTEN_NOW -> {
-                // 保留当前 wakeMode：若是从常驻模式手动触发，播报后仍回到唤醒监听
-                requestListen()
-            }
+            ACTION_LISTEN_NOW -> requestListen() // 保留当前 wakeMode
             else -> {
                 wakeMode = true
                 startWake()
@@ -100,6 +102,8 @@ class WakeWordService : Service() {
 
     private fun startWake() {
         if (listening) return
+        listening = false
+        turns = 0
         val word = settings.wakeWord
         AssistantState.status.value = "常驻监听中（说「$word」）"
         val keywords = PinyinKeywords.keywordsOrDefault(this, word)
@@ -109,6 +113,7 @@ class WakeWordService : Service() {
     private fun onWake(keyword: String) {
         if (!wakeMode || listening) return
         AssistantState.status.value = "已唤醒：$keyword"
+        feedback.beep()
         tts.speak("在")
         requestListen()
     }
@@ -120,10 +125,11 @@ class WakeWordService : Service() {
         if (listening) return
         listening = true
         AssistantState.heard.value = ""
-        AssistantState.status.value = "正在聆听…"
+        AssistantState.status.value = if (turns > 0) "继续聆听…" else "正在聆听…"
         asr.start(object : SpeechRecognizerManager.Callback {
             override fun onReady() {
                 AssistantState.status.value = "请说话…"
+                feedback.ready()
             }
 
             override fun onPartial(text: String) {
@@ -136,41 +142,76 @@ class WakeWordService : Service() {
             }
 
             override fun onError(error: Int) {
-                AssistantState.status.value = "识别出错：${describeAsrError(error)}"
-                finishListening()
+                onListenError(error)
             }
 
             override fun onEnd() {
-                // 后续流程交给 onFinal / onError
+                // 后续交给 onFinal / onError
             }
         })
+    }
+
+    private fun onListenError(error: Int) {
+        feedback.error()
+        if (turns > 0) {
+            // 连续对话中没听清 → 认为对话结束
+            AssistantState.status.value = "没有听清，结束对话"
+        } else {
+            AssistantState.status.value = "识别出错：${describeAsrError(error)}"
+        }
+        finishConversation()
     }
 
     // ---- 回答 ----
 
     private fun process(text: String) {
         if (text.isBlank()) {
-            AssistantState.status.value = "没有听清"
-            finishListening()
+            finishConversation()
             return
         }
+        if (isEndPhrase(text)) {
+            AssistantState.status.value = "好的，结束对话"
+            tts.speak("好的，再见")
+            finishConversation()
+            return
+        }
+
         AssistantState.status.value = "思考中…"
         scope.launch {
             val reply = agent.respond(text)
             AssistantState.answer.value = reply
             AssistantState.status.value = "完成"
-            // 播报结束后再恢复唤醒，避免把自己的声音当成唤醒词
-            tts.speak(reply) { finishListening() }
+            tts.speak(reply) { onSpoken() }
         }
     }
 
-    private fun finishListening() {
+    /** 一条回答播报完毕。 */
+    private fun onSpoken() {
         listening = false
+        if (wakeMode && settings.continuousConversation && turns < MAX_TURNS) {
+            turns++
+            requestListen() // 自动进入下一轮
+        } else {
+            finishConversation()
+        }
+    }
+
+    /** 结束当前这轮对话，回到唤醒监听（或停止服务）。 */
+    private fun finishConversation() {
+        listening = false
+        turns = 0
         if (wakeMode) {
             startWake()
         } else {
             stopEverything()
         }
+    }
+
+    private fun isEndPhrase(text: String): Boolean {
+        val t = text.trim()
+        if (t.length > 12) return false
+        return Regex("结束|退出|不聊了|不说了|再见|拜拜|没有别的事|没别的|没有了|不用了")
+            .containsMatchIn(t)
     }
 
     // ---- 生命周期 ----
@@ -179,6 +220,7 @@ class WakeWordService : Service() {
         detector.stop()
         asr.destroy()
         tts.shutdown()
+        feedback.release()
         AssistantState.running.value = false
         AssistantState.status.value = "已停止"
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -189,6 +231,7 @@ class WakeWordService : Service() {
         scope.cancel()
         detector.stop()
         tts.shutdown()
+        feedback.release()
         AssistantState.running.value = false
         super.onDestroy()
     }
@@ -232,6 +275,7 @@ class WakeWordService : Service() {
 
         private const val CHANNEL_ID = "wake_word_channel"
         private const val NOTIFICATION_ID = 1001
+        private const val MAX_TURNS = 6
 
         /** 把 SpeechRecognizer 的错误码翻译成人话。 */
         private fun describeAsrError(error: Int): String = when (error) {
