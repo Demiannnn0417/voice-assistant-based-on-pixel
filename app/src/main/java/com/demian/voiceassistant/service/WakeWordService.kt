@@ -14,15 +14,19 @@ import android.speech.SpeechRecognizer
 import androidx.core.app.NotificationCompat
 import com.demian.voiceassistant.MainActivity
 import com.demian.voiceassistant.R
+import com.demian.voiceassistant.actions.DeviceActions
 import com.demian.voiceassistant.agent.AssistantAgent
 import com.demian.voiceassistant.agent.CommandRouter
 import com.demian.voiceassistant.asr.SpeechRecognizerManager
+import com.demian.voiceassistant.data.ConversationStore
+import com.demian.voiceassistant.data.NotesStore
 import com.demian.voiceassistant.data.SettingsStore
 import com.demian.voiceassistant.knowledge.KnowledgeRetriever
 import com.demian.voiceassistant.knowledge.KnowledgeStore
 import com.demian.voiceassistant.llm.DeepSeekClient
 import com.demian.voiceassistant.phone.PhoneInfoProvider
 import com.demian.voiceassistant.tts.TtsManager
+import com.demian.voiceassistant.wake.PinyinKeywords
 import com.demian.voiceassistant.wake.WakeWordDetector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,21 +49,25 @@ class WakeWordService : Service() {
     private lateinit var asr: SpeechRecognizerManager
     private lateinit var tts: TtsManager
     private lateinit var agent: AssistantAgent
+    private lateinit var settings: SettingsStore
 
     private var wakeMode = false
     private var listening = false
 
     override fun onCreate() {
         super.onCreate()
+        settings = SettingsStore(this)
         detector = WakeWordDetector(this)
         asr = SpeechRecognizerManager(this)
         tts = TtsManager(this)
         val phone = PhoneInfoProvider(this)
         agent = AssistantAgent(
             router = CommandRouter(phone),
-            llm = DeepSeekClient(SettingsStore(this)),
+            llm = DeepSeekClient(settings),
             phone = phone,
             retriever = KnowledgeRetriever(KnowledgeStore(this)),
+            conversation = ConversationStore(this),
+            actions = DeviceActions(this, NotesStore(this)),
         )
         AssistantState.running.value = true
     }
@@ -92,8 +100,10 @@ class WakeWordService : Service() {
 
     private fun startWake() {
         if (listening) return
-        AssistantState.status.value = "常驻监听中（说「你好小楠」）"
-        detector.start { keyword -> mainHandler.post { onWake(keyword) } }
+        val word = settings.wakeWord
+        AssistantState.status.value = "常驻监听中（说「$word」）"
+        val keywords = PinyinKeywords.keywordsOrDefault(this, word)
+        detector.start(keywords) { keyword -> mainHandler.post { onWake(keyword) } }
     }
 
     private fun onWake(keyword: String) {
@@ -208,7 +218,7 @@ class WakeWordService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("语音助手运行中")
-            .setContentText("正在监听唤醒词「你好小楠」")
+            .setContentText("正在监听唤醒词「${settings.wakeWord}」")
             .setSmallIcon(R.drawable.ic_stat_mic)
             .setContentIntent(contentIntent)
             .setOngoing(true)

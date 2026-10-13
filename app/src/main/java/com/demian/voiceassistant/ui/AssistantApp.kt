@@ -15,6 +15,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -27,11 +28,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.core.content.ContextCompat
 import com.demian.voiceassistant.R
+import com.demian.voiceassistant.data.ConversationStore
 import com.demian.voiceassistant.data.SettingsStore
 import com.demian.voiceassistant.knowledge.KnowledgeImporter
 import com.demian.voiceassistant.knowledge.KnowledgeStore
 import com.demian.voiceassistant.service.AssistantState
 import com.demian.voiceassistant.service.WakeWordService
+import com.demian.voiceassistant.ui.screens.ConversationScreen
 import com.demian.voiceassistant.ui.screens.HomeScreen
 import com.demian.voiceassistant.ui.screens.KnowledgeScreen
 import com.demian.voiceassistant.ui.screens.SettingsScreen
@@ -44,6 +47,7 @@ fun AssistantApp() {
 
     val settings = remember { SettingsStore(context) }
     val knowledge = remember { KnowledgeStore(context) }
+    val conversation = remember { ConversationStore(context) }
 
     val status by AssistantState.status.collectAsState()
     val heard by AssistantState.heard.collectAsState()
@@ -53,6 +57,13 @@ fun AssistantApp() {
     var tab by remember { mutableIntStateOf(0) }
     var docCount by remember { mutableStateOf(knowledge.chunkCount()) }
     var sources by remember { mutableStateOf(knowledge.sources()) }
+    var wakeWord by remember { mutableStateOf(settings.wakeWord) }
+    var messages by remember { mutableStateOf(conversation.all()) }
+
+    // 每次有新回答就刷新对话记录
+    LaunchedEffect(answer) {
+        messages = conversation.all()
+    }
 
     fun hasMic(): Boolean = ContextCompat.checkSelfPermission(
         context, Manifest.permission.RECORD_AUDIO
@@ -141,12 +152,18 @@ fun AssistantApp() {
                 NavigationBarItem(
                     selected = tab == 1,
                     onClick = { tab = 1 },
-                    icon = { Icon(painterResource(R.drawable.ic_nav_knowledge), contentDescription = null) },
-                    label = { Text("知识库") },
+                    icon = { Icon(painterResource(R.drawable.ic_nav_chat), contentDescription = null) },
+                    label = { Text("对话") },
                 )
                 NavigationBarItem(
                     selected = tab == 2,
                     onClick = { tab = 2 },
+                    icon = { Icon(painterResource(R.drawable.ic_nav_knowledge), contentDescription = null) },
+                    label = { Text("知识库") },
+                )
+                NavigationBarItem(
+                    selected = tab == 3,
+                    onClick = { tab = 3 },
                     icon = { Icon(painterResource(R.drawable.ic_nav_settings), contentDescription = null) },
                     label = { Text("设置") },
                 )
@@ -160,6 +177,7 @@ fun AssistantApp() {
                     heard = heard,
                     answer = answer,
                     running = running,
+                    wakeWord = wakeWord,
                     onToggleWake = { checked -> if (checked) enableWake() else stopWakeService() },
                     onListenNow = {
                         if (hasMic()) listenNow()
@@ -167,7 +185,16 @@ fun AssistantApp() {
                     },
                 )
 
-                1 -> KnowledgeScreen(
+                1 -> ConversationScreen(
+                    messages = messages,
+                    onClear = {
+                        conversation.clear()
+                        messages = emptyList()
+                        AssistantState.status.value = "已清空对话记录"
+                    },
+                )
+
+                2 -> KnowledgeScreen(
                     docCount = docCount,
                     sources = sources,
                     onImport = { importLauncher.launch(arrayOf("text/*")) },
@@ -179,7 +206,14 @@ fun AssistantApp() {
                     },
                 )
 
-                else -> SettingsScreen(settings = settings)
+                else -> SettingsScreen(
+                    settings = settings,
+                    onWakeWordChanged = { wakeWord = it },
+                    onClearConversation = {
+                        conversation.clear()
+                        messages = emptyList()
+                    },
+                )
             }
         }
     }

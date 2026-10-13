@@ -20,9 +20,17 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
         set(value) = prefs.edit().putString(KEY_MODEL, value.trim()).apply()
 
+    /** 自定义唤醒词（中文）。 */
+    var wakeWord: String
+        get() = prefs.getString(KEY_WAKE_WORD, DEFAULT_WAKE_WORD)?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_WAKE_WORD
+        set(value) = prefs.edit().putString(KEY_WAKE_WORD, value.trim()).apply()
+
     companion object {
         private const val KEY_DEEPSEEK = "deepseek_api_key"
         private const val KEY_MODEL = "deepseek_model"
+        private const val KEY_WAKE_WORD = "wake_word"
         const val DEFAULT_MODEL = "deepseek-chat"
+        const val DEFAULT_WAKE_WORD = "你好小楠"
     }
 }

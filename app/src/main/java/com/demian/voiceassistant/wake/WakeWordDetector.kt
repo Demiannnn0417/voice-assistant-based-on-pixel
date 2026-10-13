@@ -28,8 +28,8 @@ class WakeWordDetector(private val context: Context) {
     private var worker: Thread? = null
     private var audioRecord: AudioRecord? = null
 
-    /** 开始监听。onDetected 在后台线程回调，调用方需自行切回主线程。 */
-    fun start(onDetected: (String) -> Unit) {
+    /** 开始监听。[keywords] 为 KWS 的关键词行（已由 [PinyinKeywords] 生成）。 */
+    fun start(keywords: String, onDetected: (String) -> Unit) {
         if (running) return
         running = true
         worker = thread(name = "wake-word") {
@@ -37,7 +37,7 @@ class WakeWordDetector(private val context: Context) {
             var record: AudioRecord? = null
             try {
                 spotter = createSpotter()
-                val stream = spotter.createStream(keywordsString())
+                val stream = spotter.createStream(keywords)
                 record = createRecorder() ?: return@thread
                 audioRecord = record
                 record.startRecording()
@@ -110,15 +110,6 @@ class WakeWordDetector(private val context: Context) {
             keywordsFile = "$MODEL_DIR/keywords.txt",
         )
         return KeywordSpotter(assetManager = context.assets, config = config)
-    }
-
-    /** 读取 assets 里的 keywords.txt，把换行换成 "/" 作为 createStream 的入参。 */
-    private fun keywordsString(): String {
-        return context.assets.open("$MODEL_DIR/keywords.txt")
-            .bufferedReader(Charsets.UTF_8)
-            .use { it.readText() }
-            .replace("\n", "/")
-            .trim()
     }
 
     companion object {

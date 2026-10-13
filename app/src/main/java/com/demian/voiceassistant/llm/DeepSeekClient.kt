@@ -10,27 +10,28 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * DeepSeek 对话客户端（OpenAI 兼容接口）。
+ * DeepSeek 对话客户端（OpenAI 兼容接口，支持函数调用/工具调用）。
  *
  * 直接用 [HttpURLConnection] + org.json，避免引入额外依赖。
- * 网络请求必须在 IO 线程执行，所以 [chat] 是 suspend 函数。
+ * 网络请求在 IO 线程执行。
  */
 class DeepSeekClient(private val settings: SettingsStore) {
 
-    suspend fun chat(messages: List<ChatMessage>): String = withContext(Dispatchers.IO) {
+    suspend fun chat(
+        messages: List<ChatMessage>,
+        tools: JSONArray? = null,
+    ): LlmResponse = withContext(Dispatchers.IO) {
         val apiKey = settings.deepSeekApiKey
-        if (apiKey.isBlank()) {
-            throw IOException("未配置 API Key")
-        }
+        if (apiKey.isBlank()) throw IOException("未配置 API Key")
 
         val payload = JSONObject().apply {
             put("model", settings.deepSeekModel)
             put("stream", false)
-            put("messages", JSONArray().apply {
-                messages.forEach { msg ->
-                    put(JSONObject().put("role", msg.role).put("content", msg.content))
-                }
-            })
+            put("messages", messagesToJson(messages))
+            if (tools != null && tools.length() > 0) {
+                put("tools", tools)
+                put("tool_choice", "auto")
+            }
         }.toString()
 
         val conn = (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
@@ -44,34 +45,90 @@ class DeepSeekClient(private val settings: SettingsStore) {
 
         try {
             conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-
             val code = conn.responseCode
             val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
                 ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
                 .orEmpty()
+            if (code !in 200..299) throw IOException(parseError(code, body))
 
-            if (code !in 200..299) {
-                throw IOException(parseError(code, body))
-            }
-
-            JSONObject(body)
-                .getJSONArray("choices")
-                .getJSONObject(0)
-                .getJSONObject("message")
-                .getString("content")
-                .trim()
+            parseResponse(body)
         } finally {
             conn.disconnect()
         }
     }
 
-    private fun parseError(code: Int, body: String): String {
-        return try {
-            val msg = JSONObject(body).getJSONObject("error").optString("message")
-            "HTTP $code：$msg"
-        } catch (_: Exception) {
-            "HTTP $code：$body"
+    private fun parseResponse(body: String): LlmResponse {
+        val message = JSONObject(body)
+            .getJSONArray("choices")
+            .getJSONObject(0)
+            .getJSONObject("message")
+
+        val content = if (message.isNull("content")) {
+            null
+        } else {
+            message.optString("content").takeIf { it.isNotBlank() }
         }
+
+        val toolCalls = mutableListOf<ToolCall>()
+        message.optJSONArray("tool_calls")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val tc = arr.getJSONObject(i)
+                val fn = tc.getJSONObject("function")
+                toolCalls.add(
+                    ToolCall(
+                        id = tc.optString("id"),
+                        name = fn.optString("name"),
+                        arguments = fn.optString("arguments"),
+                    )
+                )
+            }
+        }
+
+        return LlmResponse(content = content, toolCalls = toolCalls)
+    }
+
+    private fun messagesToJson(messages: List<ChatMessage>): JSONArray {
+        val arr = JSONArray()
+        messages.forEach { m ->
+            val o = JSONObject().apply { put("role", m.role) }
+            when {
+                m.role == "assistant" && m.toolCalls.isNotEmpty() -> {
+                    o.put("content", m.content ?: "")
+                    o.put("tool_calls", JSONArray().apply {
+                        m.toolCalls.forEach { tc ->
+                            put(
+                                JSONObject().apply {
+                                    put("id", tc.id)
+                                    put("type", "function")
+                                    put(
+                                        "function",
+                                        JSONObject()
+                                            .put("name", tc.name)
+                                            .put("arguments", tc.arguments)
+                                    )
+                                }
+                            )
+                        }
+                    })
+                }
+
+                m.role == "tool" -> {
+                    o.put("tool_call_id", m.toolCallId ?: "")
+                    o.put("content", m.content ?: "")
+                }
+
+                else -> o.put("content", m.content ?: "")
+            }
+            arr.put(o)
+        }
+        return arr
+    }
+
+    private fun parseError(code: Int, body: String): String = try {
+        val msg = JSONObject(body).getJSONObject("error").optString("message")
+        "HTTP $code：$msg"
+    } catch (_: Exception) {
+        "HTTP $code：$body"
     }
 
     companion object {

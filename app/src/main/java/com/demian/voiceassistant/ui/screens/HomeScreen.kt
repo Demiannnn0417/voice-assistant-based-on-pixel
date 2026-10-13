@@ -31,6 +31,7 @@ fun HomeScreen(
     heard: String,
     answer: String,
     running: Boolean,
+    wakeWord: String,
     onToggleWake: (Boolean) -> Unit,
     onListenNow: () -> Unit,
     modifier: Modifier = Modifier,
@@ -49,7 +50,7 @@ fun HomeScreen(
 
         StatusChip(status)
 
-        WakeCard(running = running, onToggle = onToggleWake)
+        WakeCard(running = running, wakeWord = wakeWord, onToggle = onToggleWake)
 
         if (heard.isNotBlank()) {
             MessageCard(label = "你说", text = heard, emphasized = false)
@@ -78,7 +79,7 @@ private fun StatusChip(status: String) {
 }
 
 @Composable
-private fun WakeCard(running: Boolean, onToggle: (Boolean) -> Unit) {
+private fun WakeCard(running: Boolean, wakeWord: String, onToggle: (Boolean) -> Unit) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -93,7 +94,7 @@ private fun WakeCard(running: Boolean, onToggle: (Boolean) -> Unit) {
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "唤醒词：你好小楠 · 后台/息屏可用",
+                    text = "唤醒词：$wakeWord · 后台/息屏可用",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

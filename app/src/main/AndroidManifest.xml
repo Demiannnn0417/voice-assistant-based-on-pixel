@@ -11,6 +11,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- 通知（前台服务常驻通知，Android 13+） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 查询已安装应用（用于「打开某应用」）。个人使用；如上架商店需说明用途 -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <application
         android:allowBackup="true"

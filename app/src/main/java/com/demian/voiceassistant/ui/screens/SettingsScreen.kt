@@ -15,6 +15,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,21 +24,31 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.demian.voiceassistant.data.SettingsStore
+import com.demian.voiceassistant.wake.PinyinKeywords
 
 @Composable
 fun SettingsScreen(
     settings: SettingsStore,
+    onWakeWordChanged: (String) -> Unit,
+    onClearConversation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
+
     var apiKey by remember { mutableStateOf(settings.deepSeekApiKey) }
     var model by remember { mutableStateOf(settings.deepSeekModel) }
     var saved by remember { mutableStateOf(false) }
-    val uriHandler = LocalUriHandler.current
+
+    var wakeWord by remember { mutableStateOf(settings.wakeWord) }
+    var wakeMsg by remember { mutableStateOf("") }
+    var wakeOk by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -51,6 +62,9 @@ fun SettingsScreen(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
         )
+
+        // --- 大模型 ---
+        Text("大模型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
 
         OutlinedTextField(
             value = apiKey,
@@ -94,24 +108,75 @@ fun SettingsScreen(
             )
         }
 
+        // --- 唤醒词 ---
+        Text("唤醒词", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+        OutlinedTextField(
+            value = wakeWord,
+            onValueChange = {
+                wakeWord = it
+                wakeMsg = ""
+            },
+            label = { Text("自定义唤醒词（中文）") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Button(
+            onClick = {
+                val vocab = runCatching { PinyinKeywords.vocab(context) }.getOrDefault(emptySet())
+                when (val r = PinyinKeywords.toKeywords(wakeWord, vocab)) {
+                    is PinyinKeywords.Result.Ok -> {
+                        settings.wakeWord = wakeWord.trim()
+                        onWakeWordChanged(wakeWord.trim())
+                        wakeOk = true
+                        wakeMsg = "已保存。下次开启唤醒生效。"
+                    }
+
+                    is PinyinKeywords.Result.Invalid -> {
+                        wakeOk = false
+                        wakeMsg = r.message
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("保存唤醒词")
+        }
+
+        if (wakeMsg.isNotBlank()) {
+            Text(
+                text = wakeMsg,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (wakeOk) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            )
+        }
+
+        OutlinedButton(
+            onClick = onClearConversation,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("🗑 清空对话记录")
+        }
+
         Spacer(Modifier.height(8.dp))
 
-        Text(
-            text = "关于",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
+        // --- 关于 ---
+        Text("关于", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(vertical = 4.dp)) {
-                InfoRow("唤醒词", "你好小楠")
-                InfoDivider()
                 InfoRow("唤醒引擎", "sherpa-onnx（离线）")
+                InfoDivider()
                 InfoRow("语音识别", "系统 SpeechRecognizer")
                 InfoDivider()
                 InfoRow("对话模型", settings.deepSeekModel)
                 InfoDivider()
-                InfoRow("版本", "v1.1")
+                InfoRow("版本", "v1.2")
             }
         }
 
