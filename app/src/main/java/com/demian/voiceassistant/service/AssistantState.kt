@@ -20,4 +20,7 @@ object AssistantState {
 
     /** 服务是否正在运行。 */
     val running = MutableStateFlow(false)
+
+    /** 当前麦克风音量（0~1），用于界面波形动画。 */
+    val amplitude = MutableStateFlow(0f)
 }

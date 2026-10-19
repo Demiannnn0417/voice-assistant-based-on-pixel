@@ -11,7 +11,7 @@ import android.database.sqlite.SQLiteOpenHelper
  * 导入的文件会被切成若干「片段(chunk)」存进来，检索时按相关性取回。
  */
 class KnowledgeStore(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
+    SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION), ChunkSource {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -49,7 +49,7 @@ class KnowledgeStore(context: Context) :
     }
 
     /** 取出全部片段（source, content）。 */
-    fun allChunks(): List<Pair<String, String>> {
+    override fun allChunks(): List<Pair<String, String>> {
         val result = mutableListOf<Pair<String, String>>()
         readableDatabase.rawQuery(
             "SELECT source, content FROM $TABLE", null
@@ -85,6 +85,11 @@ class KnowledgeStore(context: Context) :
     /** 清空知识库。 */
     fun clear() {
         writableDatabase.execSQL("DELETE FROM $TABLE")
+    }
+
+    /** 删除某个来源文件的全部片段。 */
+    fun deleteSource(source: String) {
+        writableDatabase.delete(TABLE, "source = ?", arrayOf(source))
     }
 
     companion object {

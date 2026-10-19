@@ -15,25 +15,25 @@ import java.util.Locale
  *
  * 这些都是**不需要额外权限**的公开系统信息，用 Context 就能拿到。
  */
-class PhoneInfoProvider(private val context: Context) {
+class PhoneInfoProvider(private val context: Context) : PhoneInfo {
 
     private val timeFormatter = DateTimeFormatter.ofPattern("HH点mm分", Locale.CHINA)
 
     /** 例如：现在 14点05分 */
-    fun time(): String {
+    override fun time(): String {
         val now = LocalTime.now()
         return "现在是 ${now.format(timeFormatter)}"
     }
 
     /** 例如：今天是 2026年10月10日 星期六 */
-    fun date(): String {
+    override fun date(): String {
         val today = LocalDate.now()
         val weekday = today.dayOfWeek.getDisplayName(TextStyle.FULL, Locale.CHINA)
         return "今天是 ${today.year}年${today.monthValue}月${today.dayOfMonth}日 $weekday"
     }
 
     /** 例如：当前电量 78% */
-    fun battery(): String {
+    override fun battery(): String {
         val intent: Intent? = context.registerReceiver(
             null,
             IntentFilter(Intent.ACTION_BATTERY_CHANGED)

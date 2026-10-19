@@ -53,12 +53,14 @@ fun AssistantApp() {
     val heard by AssistantState.heard.collectAsState()
     val answer by AssistantState.answer.collectAsState()
     val running by AssistantState.running.collectAsState()
+    val level by AssistantState.amplitude.collectAsState()
 
     var tab by remember { mutableIntStateOf(0) }
     var docCount by remember { mutableStateOf(knowledge.chunkCount()) }
     var sources by remember { mutableStateOf(knowledge.sources()) }
     var wakeWord by remember { mutableStateOf(settings.wakeWord) }
     var messages by remember { mutableStateOf(conversation.all()) }
+    var apiKeySet by remember { mutableStateOf(settings.deepSeekApiKey.isNotBlank()) }
 
     // 每次有新回答就刷新对话记录
     LaunchedEffect(answer) {
@@ -89,6 +91,15 @@ fun AssistantApp() {
             context,
             Intent(context, WakeWordService::class.java)
                 .setAction(WakeWordService.ACTION_LISTEN_NOW)
+        )
+    }
+
+    fun sendText(text: String) {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, WakeWordService::class.java)
+                .setAction(WakeWordService.ACTION_TEXT_COMMAND)
+                .putExtra(WakeWordService.EXTRA_TEXT, text)
         )
     }
 
@@ -126,15 +137,23 @@ fun AssistantApp() {
     }
 
     val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
             scope.launch {
-                val n = KnowledgeImporter.import(context, knowledge, uri)
+                var total = 0
+                var failed = 0
+                uris.forEach { uri ->
+                    val n = KnowledgeImporter.import(context, knowledge, uri)
+                    if (n > 0) total += n else failed++
+                }
                 docCount = knowledge.chunkCount()
                 sources = knowledge.sources()
-                AssistantState.status.value =
-                    if (n > 0) "已导入 $n 个片段" else "文件为空或读取失败"
+                AssistantState.status.value = when {
+                    total > 0 && failed == 0 -> "已导入 $total 个片段"
+                    total > 0 -> "导入 $total 个片段，$failed 个文件为空/失败"
+                    else -> "文件为空或读取失败"
+                }
             }
         }
     }
@@ -178,11 +197,15 @@ fun AssistantApp() {
                     answer = answer,
                     running = running,
                     wakeWord = wakeWord,
+                    level = level,
+                    hasApiKey = apiKeySet,
                     onToggleWake = { checked -> if (checked) enableWake() else stopWakeService() },
                     onListenNow = {
                         if (hasMic()) listenNow()
                         else micLauncherListen.launch(Manifest.permission.RECORD_AUDIO)
                     },
+                    onSendText = { sendText(it) },
+                    onOpenSettings = { tab = 3 },
                 )
 
                 1 -> ConversationScreen(
@@ -204,6 +227,12 @@ fun AssistantApp() {
                         sources = emptyList()
                         AssistantState.status.value = "已清空知识库"
                     },
+                    onDeleteSource = { source ->
+                        knowledge.deleteSource(source)
+                        docCount = knowledge.chunkCount()
+                        sources = knowledge.sources()
+                        AssistantState.status.value = "已删除「$source」"
+                    },
                 )
 
                 else -> SettingsScreen(
@@ -213,6 +242,7 @@ fun AssistantApp() {
                         conversation.clear()
                         messages = emptyList()
                     },
+                    onSaved = { apiKeySet = settings.deepSeekApiKey.isNotBlank() },
                 )
             }
         }

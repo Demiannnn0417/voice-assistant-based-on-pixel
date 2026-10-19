@@ -16,6 +16,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +30,7 @@ fun KnowledgeScreen(
     sources: List<Pair<String, Int>>,
     onImport: () -> Unit,
     onClear: () -> Unit,
+    onDeleteSource: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -85,6 +87,13 @@ fun KnowledgeScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            TextButton(onClick = { onDeleteSource(name) }) {
+                                Text(
+                                    text = "删除",
+                                    color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            }
                         }
                         if (index != sources.lastIndex) {
                             HorizontalDivider(

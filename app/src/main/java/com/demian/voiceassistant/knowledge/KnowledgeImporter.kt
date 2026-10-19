@@ -13,7 +13,8 @@ import kotlinx.coroutines.withContext
  */
 object KnowledgeImporter {
 
-    private const val CHUNK_SIZE = 500
+    private const val CHUNK_SIZE = 600
+    private const val OVERLAP = 80
 
     /** 导入一个文件，返回写入的片段数。 */
     suspend fun import(context: Context, store: KnowledgeStore, uri: Uri): Int =
@@ -41,7 +42,7 @@ object KnowledgeImporter {
         return name
     }
 
-    /** 按段落与长度切分，尽量不把一句话切断。 */
+    /** 按段落与长度切分，块之间保留少量重叠，避免语义被切断。 */
     private fun splitIntoChunks(text: String): List<String> {
         val normalized = text.replace("\r\n", "\n")
         val paragraphs = normalized.split("\n")
@@ -49,9 +50,14 @@ object KnowledgeImporter {
         val builder = StringBuilder()
 
         fun flush() {
-            if (builder.isNotBlank()) {
-                chunks.add(builder.toString().trim())
-                builder.clear()
+            if (builder.isBlank()) return
+            val chunk = builder.toString().trim()
+            builder.clear()
+            if (chunk.isEmpty()) return
+            chunks.add(chunk)
+            // 把尾部带到下一块，保留上下文
+            if (chunk.length > OVERLAP) {
+                builder.append(chunk.takeLast(OVERLAP)).append('\n')
             }
         }
 

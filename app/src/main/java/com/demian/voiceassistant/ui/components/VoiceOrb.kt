@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.demian.voiceassistant.R
@@ -35,6 +36,7 @@ fun VoiceOrb(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    level: Float = 0f,
 ) {
     val primary = MaterialTheme.colorScheme.primary
     val secondary = MaterialTheme.colorScheme.secondary
@@ -50,7 +52,16 @@ fun VoiceOrb(
         label = "pulse",
     )
 
-    Box(modifier = modifier.size(240.dp), contentAlignment = Alignment.Center) {
+    Box(
+        modifier = modifier
+            .size(240.dp)
+            .graphicsLayer {
+                val s = if (active) 1f + level.coerceIn(0f, 1f) * 0.06f else 1f
+                scaleX = s
+                scaleY = s
+            },
+        contentAlignment = Alignment.Center,
+    ) {
         // 静态光晕
         Box(
             Modifier

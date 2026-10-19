@@ -11,6 +11,7 @@ import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import kotlin.concurrent.thread
+import kotlin.math.sqrt
 
 /**
  * 唤醒词检测（基于 sherpa-onnx 的关键词唤醒 KWS）。
@@ -29,7 +30,11 @@ class WakeWordDetector(private val context: Context) {
     private var audioRecord: AudioRecord? = null
 
     /** 开始监听。[keywords] 为 KWS 的关键词行（已由 [PinyinKeywords] 生成）。 */
-    fun start(keywords: String, onDetected: (String) -> Unit) {
+    fun start(
+        keywords: String,
+        onLevel: (Float) -> Unit,
+        onDetected: (String) -> Unit,
+    ) {
         if (running) return
         running = true
         worker = thread(name = "wake-word") {
@@ -47,6 +52,14 @@ class WakeWordDetector(private val context: Context) {
                     val n = record.read(buffer, 0, buffer.size)
                     if (n <= 0) continue
                     val samples = FloatArray(n) { buffer[it] / 32768.0f }
+                    // 计算音量（RMS），用于界面波形
+                    var sum = 0.0
+                    for (i in 0 until n) {
+                        val s = samples[i]
+                        sum += s.toDouble() * s
+                    }
+                    val rms = sqrt(sum / n).toFloat()
+                    onLevel((rms * 6f).coerceIn(0f, 1f))
                     stream.acceptWaveform(samples, SAMPLE_RATE)
                     while (running && spotter.isReady(stream)) {
                         spotter.decode(stream)

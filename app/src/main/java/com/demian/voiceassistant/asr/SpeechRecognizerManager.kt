@@ -29,6 +29,8 @@ class SpeechRecognizerManager(private val context: Context) {
         fun onError(error: Int)
         /** 一次识别会话结束（无论成功或失败）。 */
         fun onEnd()
+        /** 实时音量（0~1），用于波形动画。 */
+        fun onRms(level: Float) {}
     }
 
     private var recognizer: SpeechRecognizer? = null
@@ -89,7 +91,11 @@ class SpeechRecognizerManager(private val context: Context) {
 
         override fun onBeginningOfSpeech() {}
 
-        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onRmsChanged(rmsdB: Float) {
+            // rmsdB 大约在 -2 ~ 10 之间，归一化到 0~1
+            val level = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
+            callback?.onRms(level)
+        }
 
         override fun onBufferReceived(buffer: ByteArray?) {}
 

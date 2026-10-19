@@ -7,23 +7,35 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.AlarmClock
+import android.provider.CalendarContract
+import android.provider.Settings
 import android.view.KeyEvent
 import com.demian.voiceassistant.data.NotesStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.util.Calendar
 
 /**
  * 设备动作执行器：把大模型选择的「工具」翻译成真实的系统操作。
  *
- * 说明：带界面的操作（闹钟/打开应用/拨号）在**后台**可能被 Android 限制，
- * 这里统一 try/catch 并在失败时返回说明，避免崩溃。
+ * 带界面的操作在后台可能被 Android 限制，这里统一 try/catch 并返回说明。
+ * 天气查询需要网络，所以 [execute] 是 suspend 函数。
  */
 class DeviceActions(
     private val context: Context,
     private val notes: NotesStore,
 ) {
 
-    fun execute(name: String, args: JSONObject): String = try {
+    suspend fun execute(name: String, args: JSONObject): String = try {
         when (name) {
             "set_alarm" -> setAlarm(args)
             "set_timer" -> setTimer(args)
@@ -35,6 +47,10 @@ class DeviceActions(
             "make_call" -> makeCall(args)
             "save_note" -> saveNote(args)
             "list_notes" -> listNotes()
+            "get_weather" -> getWeather(args)
+            "open_settings" -> openSettings(args)
+            "create_calendar_event" -> createCalendarEvent(args)
+            "vibrate" -> vibrate(args)
             else -> "不支持的操作：$name"
         }
     } catch (t: Throwable) {
@@ -173,6 +189,137 @@ class DeviceActions(
     private fun listNotes(): String {
         val items = notes.list()
         return if (items.isEmpty()) "还没有任何便签" else items.joinToString("；")
+    }
+
+    private fun openSettings(args: JSONObject): String {
+        val action = when (args.optString("page")) {
+            "wifi" -> Settings.ACTION_WIFI_SETTINGS
+            "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            "sound" -> Settings.ACTION_SOUND_SETTINGS
+            "display" -> Settings.ACTION_DISPLAY_SETTINGS
+            "battery" -> Settings.ACTION_BATTERY_SAVER_SETTINGS
+            "location" -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+            "apps" -> Settings.ACTION_APPLICATION_SETTINGS
+            else -> Settings.ACTION_SETTINGS
+        }
+        val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return if (tryStart(intent)) "已打开设置" else "无法打开设置"
+    }
+
+    private fun createCalendarEvent(args: JSONObject): String {
+        val title = args.optString("title").trim().ifBlank { "语音助手日程" }
+        val hour = args.optInt("hour", -1)
+        val minute = args.optInt("minute", -1)
+        if (hour !in 0..23 || minute !in 0..59) return "没听懂日程时间"
+        val dayOffset = args.optInt("day_offset", 0).coerceIn(0, 30)
+
+        val begin = Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, dayOffset)
+            set(Calendar.HOUR_OF_DAY, hour)
+            set(Calendar.MINUTE, minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+        val intent = Intent(Intent.ACTION_INSERT)
+            .setData(CalendarContract.Events.CONTENT_URI)
+            .apply {
+                putExtra(CalendarContract.Events.TITLE, title)
+                putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, begin)
+                putExtra(CalendarContract.EXTRA_EVENT_END_TIME, begin + 60 * 60 * 1000)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        return if (tryStart(intent)) "已打开日历，创建「$title」" else "无法打开日历"
+    }
+
+    private fun vibrate(args: JSONObject): String {
+        val ms = args.optInt("ms", 300).coerceIn(50, 2000).toLong()
+        val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
+                ?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+        vibrator ?: return "这台设备不支持震动"
+        vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE))
+        return "已震动"
+    }
+
+    // ---- 天气（Open-Meteo，免费无需 Key）----
+
+    private suspend fun getWeather(args: JSONObject): String = withContext(Dispatchers.IO) {
+        val city = args.optString("city").trim()
+        if (city.isBlank()) return@withContext "没说要查哪个城市"
+
+        try {
+            val geoUrl = "https://geocoding-api.open-meteo.com/v1/search?name=" +
+                URLEncoder.encode(city, "UTF-8") + "&count=1&language=zh&format=json"
+            val geo = JSONObject(httpGet(geoUrl))
+            val results = geo.optJSONArray("results")
+            if (results == null || results.length() == 0) {
+                return@withContext "没找到城市「$city」"
+            }
+
+            val place = results.getJSONObject(0)
+            val lat = place.getDouble("latitude")
+            val lon = place.getDouble("longitude")
+            val name = place.optString("name", city)
+
+            val wxUrl = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+                "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto"
+            val current = JSONObject(httpGet(wxUrl)).getJSONObject("current")
+
+            val temp = current.optDouble("temperature_2m", Double.NaN)
+            val humidity = current.optInt("relative_humidity_2m", -1)
+            val wind = current.optDouble("wind_speed_10m", Double.NaN)
+            val code = current.optInt("weather_code", -1)
+
+            buildString {
+                append("$name 现在${weatherDescription(code)}")
+                if (!temp.isNaN()) append("，气温 ${temp}℃")
+                if (humidity >= 0) append("，湿度 $humidity%")
+                if (!wind.isNaN()) append("，风速 ${wind} km/h")
+            }
+        } catch (t: Throwable) {
+            "查天气失败：${t.message ?: "网络错误"}"
+        }
+    }
+
+    private fun httpGet(url: String): String {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10_000
+            readTimeout = 15_000
+            setRequestProperty("User-Agent", "VoiceAssistant/1.0")
+        }
+        try {
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw IllegalStateException("HTTP $code")
+            return body
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun weatherDescription(code: Int): String = when (code) {
+        0 -> "晴"
+        1, 2 -> "少云"
+        3 -> "阴"
+        45, 48 -> "有雾"
+        51, 53, 55 -> "毛毛雨"
+        56, 57 -> "冻毛毛雨"
+        61, 63, 65 -> "下雨"
+        66, 67 -> "冻雨"
+        71, 73, 75 -> "下雪"
+        77 -> "雪粒"
+        80, 81, 82 -> "阵雨"
+        85, 86 -> "阵雪"
+        95 -> "雷阵雨"
+        96, 99 -> "雷阵雨伴冰雹"
+        else -> "天气未知"
     }
 
     private fun tryStart(intent: Intent): Boolean = try {

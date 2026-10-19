@@ -18,6 +18,11 @@
 | 11 | 应用内自定义唤醒词（中文自动转拼音） | ✅ |
 | 12 | 连续对话（回答后自动继续听，说「结束」退出） | ✅ |
 | 13 | 提示音 / 震动反馈 | ✅ |
+| 14 | 文字调试模式（无需麦克风即可测试助手） | ✅ |
+| 15 | 单元测试（23 条）+ GitHub Actions CI | ✅ |
+| 16 | 更多工具（天气 / 系统设置 / 日程 / 震动） | ✅ |
+| 17 | 知识库增强（多文件导入 / 按文件删除 / 分块重叠 / BM25 打分） | ✅ |
+| 18 | 通知栏按钮 / 实时音量波形 / 主题切换 / 配置引导 | ✅ |
 
 ## 使用流程（当前版本）
 
@@ -54,6 +59,16 @@
 产物：`app/build/outputs/apk/debug/app-debug.apk`
 
 或用 Android Studio 直接 Run。
+
+## 测试
+
+```bash
+./gradlew testDebugUnitTest    # 单元测试（拼音/检索/路由/JSON/工具）
+./gradlew assembleDebug        # 打包
+```
+
+- CI：`.github/workflows/android.yml`，push 后自动跑测试并产出 APK 构建产物
+- 无真机时可用 **Android 模拟器**（arm64 镜像）验证界面、前台服务与文字调试模式
 
 ## 密钥说明
 

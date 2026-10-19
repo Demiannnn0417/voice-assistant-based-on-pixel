@@ -51,6 +51,25 @@ object ToolRegistry {
             "text" to str("要记录的内容"),
         )))
         arr.put(fn("list_notes", "列出所有已记录的便签。", params(required = emptyList())))
+        arr.put(fn("get_weather", "查询某个城市当前的天气。", params(
+            required = listOf("city"),
+            "city" to str("城市名称，例如「北京」「深圳」"),
+        )))
+        arr.put(fn("open_settings", "打开系统设置页面。", params(
+            required = listOf("page"),
+            "page" to enum("设置页", "wifi", "bluetooth", "sound", "display", "battery", "location", "apps"),
+        )))
+        arr.put(fn("create_calendar_event", "创建日程（会打开日历确认页）。", params(
+            required = listOf("title", "hour", "minute"),
+            "title" to str("日程标题"),
+            "hour" to int("开始小时，0-23"),
+            "minute" to int("开始分钟，0-59"),
+            "day_offset" to int("0 表示今天，1 表示明天，以此类推"),
+        )))
+        arr.put(fn("vibrate", "让手机震动一下。", params(
+            required = emptyList(),
+            "ms" to int("震动时长毫秒，默认 300"),
+        )))
         return arr
     }
 

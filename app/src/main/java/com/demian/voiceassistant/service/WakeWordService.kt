@@ -90,6 +90,9 @@ class WakeWordService : Service() {
 
         when (intent?.action) {
             ACTION_LISTEN_NOW -> requestListen() // 保留当前 wakeMode
+            ACTION_TEXT_COMMAND -> {
+                handleTextCommand(intent.getStringExtra(EXTRA_TEXT).orEmpty())
+            }
             else -> {
                 wakeMode = true
                 startWake()
@@ -107,7 +110,11 @@ class WakeWordService : Service() {
         val word = settings.wakeWord
         AssistantState.status.value = "常驻监听中（说「$word」）"
         val keywords = PinyinKeywords.keywordsOrDefault(this, word)
-        detector.start(keywords) { keyword -> mainHandler.post { onWake(keyword) } }
+        detector.start(
+            keywords = keywords,
+            onLevel = { level -> AssistantState.amplitude.value = level },
+            onDetected = { keyword -> mainHandler.post { onWake(keyword) } },
+        )
     }
 
     private fun onWake(keyword: String) {
@@ -138,7 +145,11 @@ class WakeWordService : Service() {
 
             override fun onFinal(text: String) {
                 AssistantState.heard.value = text
-                process(text)
+                process(text, voice = true)
+            }
+
+            override fun onRms(level: Float) {
+                AssistantState.amplitude.value = level
             }
 
             override fun onError(error: Int) {
@@ -164,7 +175,7 @@ class WakeWordService : Service() {
 
     // ---- 回答 ----
 
-    private fun process(text: String) {
+    private fun process(text: String, voice: Boolean) {
         if (text.isBlank()) {
             finishConversation()
             return
@@ -181,8 +192,23 @@ class WakeWordService : Service() {
             val reply = agent.respond(text)
             AssistantState.answer.value = reply
             AssistantState.status.value = "完成"
-            tts.speak(reply) { onSpoken() }
+            tts.speak(reply) {
+                if (voice) onSpoken() else finishConversation()
+            }
         }
+    }
+
+    /** 文字调试：不经过麦克风，直接走同一套「大脑」。 */
+    private fun handleTextCommand(text: String) {
+        if (text.isBlank()) {
+            stopEverything()
+            return
+        }
+        detector.stop()
+        listening = false
+        turns = 0
+        AssistantState.heard.value = text
+        process(text, voice = false)
     }
 
     /** 一条回答播报完毕。 */
@@ -200,6 +226,7 @@ class WakeWordService : Service() {
     private fun finishConversation() {
         listening = false
         turns = 0
+        AssistantState.amplitude.value = 0f
         if (wakeMode) {
             startWake()
         } else {
@@ -221,6 +248,7 @@ class WakeWordService : Service() {
         asr.destroy()
         tts.shutdown()
         feedback.release()
+        AssistantState.amplitude.value = 0f
         AssistantState.running.value = false
         AssistantState.status.value = "已停止"
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -259,11 +287,26 @@ class WakeWordService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
+        val listenPending = PendingIntent.getService(
+            this,
+            10,
+            Intent(this, WakeWordService::class.java).setAction(ACTION_LISTEN_NOW),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val stopPending = PendingIntent.getService(
+            this,
+            11,
+            Intent(this, WakeWordService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("语音助手运行中")
             .setContentText("正在监听唤醒词「${settings.wakeWord}」")
             .setSmallIcon(R.drawable.ic_stat_mic)
             .setContentIntent(contentIntent)
+            .addAction(0, "聆听", listenPending)
+            .addAction(0, "停止", stopPending)
             .setOngoing(true)
             .build()
     }
@@ -272,6 +315,8 @@ class WakeWordService : Service() {
         const val ACTION_START_WAKE = "com.demian.voiceassistant.action.START_WAKE"
         const val ACTION_LISTEN_NOW = "com.demian.voiceassistant.action.LISTEN_NOW"
         const val ACTION_STOP = "com.demian.voiceassistant.action.STOP"
+        const val ACTION_TEXT_COMMAND = "com.demian.voiceassistant.action.TEXT_COMMAND"
+        const val EXTRA_TEXT = "com.demian.voiceassistant.extra.TEXT"
 
         private const val CHANNEL_ID = "wake_word_channel"
         private const val NOTIFICATION_ID = 1001

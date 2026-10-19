@@ -11,8 +11,6 @@ import java.net.URL
 
 /**
  * DeepSeek 对话客户端（OpenAI 兼容接口，支持函数调用/工具调用）。
- *
- * 直接用 [HttpURLConnection] + org.json，避免引入额外依赖。
  * 网络请求在 IO 线程执行。
  */
 class DeepSeekClient(private val settings: SettingsStore) {
@@ -27,7 +25,7 @@ class DeepSeekClient(private val settings: SettingsStore) {
         val payload = JSONObject().apply {
             put("model", settings.deepSeekModel)
             put("stream", false)
-            put("messages", messagesToJson(messages))
+            put("messages", MessageJson.toJson(messages))
             if (tools != null && tools.length() > 0) {
                 put("tools", tools)
                 put("tool_choice", "auto")
@@ -85,43 +83,6 @@ class DeepSeekClient(private val settings: SettingsStore) {
         }
 
         return LlmResponse(content = content, toolCalls = toolCalls)
-    }
-
-    private fun messagesToJson(messages: List<ChatMessage>): JSONArray {
-        val arr = JSONArray()
-        messages.forEach { m ->
-            val o = JSONObject().apply { put("role", m.role) }
-            when {
-                m.role == "assistant" && m.toolCalls.isNotEmpty() -> {
-                    o.put("content", m.content ?: "")
-                    o.put("tool_calls", JSONArray().apply {
-                        m.toolCalls.forEach { tc ->
-                            put(
-                                JSONObject().apply {
-                                    put("id", tc.id)
-                                    put("type", "function")
-                                    put(
-                                        "function",
-                                        JSONObject()
-                                            .put("name", tc.name)
-                                            .put("arguments", tc.arguments)
-                                    )
-                                }
-                            )
-                        }
-                    })
-                }
-
-                m.role == "tool" -> {
-                    o.put("tool_call_id", m.toolCallId ?: "")
-                    o.put("content", m.content ?: "")
-                }
-
-                else -> o.put("content", m.content ?: "")
-            }
-            arr.put(o)
-        }
-        return arr
     }
 
     private fun parseError(code: Int, body: String): String = try {

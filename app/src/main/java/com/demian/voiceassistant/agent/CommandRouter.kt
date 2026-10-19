@@ -1,6 +1,6 @@
 package com.demian.voiceassistant.agent
 
-import com.demian.voiceassistant.phone.PhoneInfoProvider
+import com.demian.voiceassistant.phone.PhoneInfo
 
 /**
  * 本地命令路由：先用关键词匹配处理简单的手机信息类命令。
@@ -8,7 +8,7 @@ import com.demian.voiceassistant.phone.PhoneInfoProvider
  * 这一步完全离线、不需要任何 API Key。等接入云端大模型后，
  * 命中不了的命令会交给大模型处理（这里返回 null 就代表「我不认识」）。
  */
-class CommandRouter(private val phone: PhoneInfoProvider) {
+class CommandRouter(private val phone: PhoneInfo) {
 
     /** 返回回答文本；无法处理时返回 null。 */
     fun route(command: String): String? {

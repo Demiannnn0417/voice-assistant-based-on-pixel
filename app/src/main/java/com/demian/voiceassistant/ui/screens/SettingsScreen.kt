@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -39,6 +40,7 @@ fun SettingsScreen(
     settings: SettingsStore,
     onWakeWordChanged: (String) -> Unit,
     onClearConversation: () -> Unit,
+    onSaved: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -47,6 +49,7 @@ fun SettingsScreen(
     var apiKey by remember { mutableStateOf(settings.deepSeekApiKey) }
     var model by remember { mutableStateOf(settings.deepSeekModel) }
     var saved by remember { mutableStateOf(false) }
+    var theme by remember { mutableStateOf(settings.themeMode) }
 
     var wakeWord by remember { mutableStateOf(settings.wakeWord) }
     var wakeMsg by remember { mutableStateOf("") }
@@ -97,6 +100,7 @@ fun SettingsScreen(
                 settings.deepSeekApiKey = apiKey
                 settings.deepSeekModel = model
                 saved = true
+                onSaved()
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -190,6 +194,25 @@ fun SettingsScreen(
             )
         }
 
+        Text("主题", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                "system" to "跟随系统",
+                "light" to "浅色",
+                "dark" to "深色",
+            ).forEach { (value, label) ->
+                FilterChip(
+                    selected = theme == value,
+                    onClick = {
+                        theme = value
+                        settings.themeMode = value
+                    },
+                    label = { Text(label) },
+                )
+            }
+        }
+
         Spacer(Modifier.height(8.dp))
 
         // --- 关于 ---
@@ -203,7 +226,7 @@ fun SettingsScreen(
                 InfoDivider()
                 InfoRow("对话模型", settings.deepSeekModel)
                 InfoDivider()
-                InfoRow("版本", "v1.3")
+                InfoRow("版本", "v1.4")
             }
         }
 

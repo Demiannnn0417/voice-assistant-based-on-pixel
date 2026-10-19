@@ -13,8 +13,8 @@ android {
         applicationId = "com.demian.voiceassistant"
         minSdk = 29
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -48,6 +48,8 @@ dependencies {
 
     // 本地拼音库（用于自定义唤醒词：中文 → 拼音 token）
     implementation(files("libs/pinyin4j-2.5.1.jar"))
+    // 单元测试用的真实 org.json（Android 本地单测默认是桩实现）
+    testImplementation(files("libs/json-20240303.jar"))
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
