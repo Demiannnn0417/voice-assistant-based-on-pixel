@@ -1,12 +1,16 @@
-# Add project specific R8 rules here.
-# AGP will combine all keep rule files in src/main/keepRules to pass to R8
-#
-# For more details, see
-#   https://d.android.com/r/tools/r8/keep-rules
+# 项目自定义 R8 keep 规则
+# AGP 会把 src/main/keepRules 下的所有规则合并后传给 R8
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# ---- sherpa-onnx JNI ----
+# KeywordSpotter / OnlineStream 等类通过 JNI 被 native 代码按「类名 + 方法名」查找，
+# 一旦被混淆或裁剪，唤醒会直接崩溃。这里整包保留最稳妥。
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+
+# 所有含 native 方法的类都保留类名与 native 方法名
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
+# 保留可能被反射/序列化用到的注解与泛型签名（保险）
+-keepattributes Signature
+-keepattributes *Annotation*

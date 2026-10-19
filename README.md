@@ -23,6 +23,8 @@
 | 16 | 更多工具（天气 / 系统设置 / 日程 / 震动） | ✅ |
 | 17 | 知识库增强（多文件导入 / 按文件删除 / 分块重叠 / BM25 打分） | ✅ |
 | 18 | 通知栏按钮 / 实时音量波形 / 主题切换 / 配置引导 | ✅ |
+| 19 | Release 签名 + R8 keep 规则（可安装正式包） | ✅ |
+| 20 | 离线本地动作（手电筒 / 音量 / 媒体，免 Key） | ✅ |
 
 ## 使用流程（当前版本）
 
@@ -69,6 +71,24 @@
 
 - CI：`.github/workflows/android.yml`，push 后自动跑测试并产出 APK 构建产物
 - 无真机时可用 **Android 模拟器**（arm64 镜像）验证界面、前台服务与文字调试模式
+
+## 正式包与签名
+
+Release 包使用本地 keystore 签名（文件均在仓库外）：
+
+- 密钥：`~/.config/voiceassistant/release.keystore`
+- 配置：`~/.config/voiceassistant/keystore.properties`
+
+```bash
+./gradlew assembleRelease
+# 产物：app/build/outputs/apk/release/app-release.apk
+```
+
+⚠️ **务必备份上面两个文件**。丢失后无法覆盖安装升级（只能卸载重装）。
+
+> 说明：AGP 9 的 `optimization`（R8 类合并）在本项目会触发
+> `kotlin.text` 的 `IllegalAccessError`，因此 release 构建中已关闭该优化。
+> JNI 相关的 keep 规则见 `app/src/main/keepRules/rules.keep`。
 
 ## 密钥说明
 

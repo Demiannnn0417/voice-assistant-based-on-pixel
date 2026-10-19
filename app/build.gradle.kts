@@ -1,6 +1,20 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+// 从仓库外读取签名配置（不存在时 release 包保持未签名，不影响 debug）
+val keystoreProps: Properties? = run {
+    val candidates = listOf(
+        rootProject.file("keystore.properties"),
+        File(System.getProperty("user.home"), ".config/voiceassistant/keystore.properties"),
+    )
+    candidates.firstOrNull { it.exists() }?.let { file ->
+        Properties().apply { file.inputStream().use { load(it) } }
+    }
 }
 
 android {
@@ -13,17 +27,33 @@ android {
         applicationId = "com.demian.voiceassistant"
         minSdk = 29
         targetSdk = 37
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            val props = keystoreProps
+            if (props != null) {
+                storeFile = File(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (keystoreProps != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            // 注意：AGP 9 的 optimization（R8 类合并）在当前项目会触发
+            // kotlin.text 的 IllegalAccessError，先关闭以保证正式包可运行。
             optimization {
-                enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
+                enable = false
             }
         }
     }

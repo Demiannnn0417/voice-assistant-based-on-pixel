@@ -226,7 +226,7 @@ fun SettingsScreen(
                 InfoDivider()
                 InfoRow("对话模型", settings.deepSeekModel)
                 InfoDivider()
-                InfoRow("版本", "v1.4")
+                InfoRow("版本", "v1.5")
             }
         }
 
