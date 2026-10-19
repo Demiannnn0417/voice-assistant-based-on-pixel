@@ -25,6 +25,10 @@
 | 18 | 通知栏按钮 / 实时音量波形 / 主题切换 / 配置引导 | ✅ |
 | 19 | Release 签名 + R8 keep 规则（可安装正式包） | ✅ |
 | 20 | 离线本地动作（手电筒 / 音量 / 媒体，免 Key） | ✅ |
+| 21 | 看门狗（ASR / TTS 超时兜底） | ✅ |
+| 22 | 唤醒引擎异常自动重启（退避） | ✅ |
+| 23 | 开机自启恢复 + 电池优化引导 | ✅ |
+| 24 | 应用内诊断日志 + 仪器化 UI 测试 | ✅ |
 
 ## 使用流程（当前版本）
 
@@ -65,8 +69,9 @@
 ## 测试
 
 ```bash
-./gradlew testDebugUnitTest    # 单元测试（拼音/检索/路由/JSON/工具）
-./gradlew assembleDebug        # 打包
+./gradlew testDebugUnitTest         # 单元测试（拼音/检索/路由/JSON/工具/离线动作）
+./gradlew connectedDebugAndroidTest # 仪器化 UI 测试（需模拟器或真机）
+./gradlew assembleDebug             # 打包
 ```
 
 - CI：`.github/workflows/android.yml`，push 后自动跑测试并产出 APK 构建产物

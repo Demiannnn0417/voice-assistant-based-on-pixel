@@ -36,12 +36,18 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_THEME, "system") ?: "system"
         set(value) = prefs.edit().putString(KEY_THEME, value).apply()
 
+    /** 用户是否希望常驻唤醒（用于开机自启恢复）。 */
+    var wakeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_WAKE_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_WAKE_ENABLED, value).apply()
+
     companion object {
         private const val KEY_DEEPSEEK = "deepseek_api_key"
         private const val KEY_MODEL = "deepseek_model"
         private const val KEY_WAKE_WORD = "wake_word"
         private const val KEY_CONTINUOUS = "continuous_conversation"
         private const val KEY_THEME = "theme_mode"
+        private const val KEY_WAKE_ENABLED = "wake_enabled"
         const val DEFAULT_MODEL = "deepseek-chat"
         const val DEFAULT_WAKE_WORD = "你好小楠"
     }

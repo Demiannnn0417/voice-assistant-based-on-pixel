@@ -13,6 +13,10 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 震动反馈 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 开机自启恢复常驻唤醒 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 电池优化白名单引导（个人使用） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- 查询已安装应用（用于「打开某应用」）。个人使用；如上架商店需说明用途 -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -44,6 +48,15 @@
             android:name=".service.WakeWordService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <receiver
+            android:name=".service.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

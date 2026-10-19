@@ -35,6 +35,7 @@ import com.demian.voiceassistant.knowledge.KnowledgeStore
 import com.demian.voiceassistant.service.AssistantState
 import com.demian.voiceassistant.service.WakeWordService
 import com.demian.voiceassistant.ui.screens.ConversationScreen
+import com.demian.voiceassistant.ui.screens.DiagnosticsScreen
 import com.demian.voiceassistant.ui.screens.HomeScreen
 import com.demian.voiceassistant.ui.screens.KnowledgeScreen
 import com.demian.voiceassistant.ui.screens.SettingsScreen
@@ -61,6 +62,7 @@ fun AssistantApp() {
     var wakeWord by remember { mutableStateOf(settings.wakeWord) }
     var messages by remember { mutableStateOf(conversation.all()) }
     var apiKeySet by remember { mutableStateOf(settings.deepSeekApiKey.isNotBlank()) }
+    var showDiag by remember { mutableStateOf(false) }
 
     // 每次有新回答就刷新对话记录
     LaunchedEffect(answer) {
@@ -158,6 +160,11 @@ fun AssistantApp() {
         }
     }
 
+    if (showDiag) {
+        DiagnosticsScreen(onBack = { showDiag = false })
+        return
+    }
+
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
@@ -242,6 +249,7 @@ fun AssistantApp() {
                         conversation.clear()
                         messages = emptyList()
                     },
+                    onOpenDiagnostics = { showDiag = true },
                     onSaved = { apiKeySet = settings.deepSeekApiKey.isNotBlank() },
                 )
             }

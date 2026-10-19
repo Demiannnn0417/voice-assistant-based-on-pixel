@@ -1,5 +1,10 @@
 package com.demian.voiceassistant.ui.screens
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +46,7 @@ fun SettingsScreen(
     settings: SettingsStore,
     onWakeWordChanged: (String) -> Unit,
     onClearConversation: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     onSaved: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -50,6 +57,13 @@ fun SettingsScreen(
     var model by remember { mutableStateOf(settings.deepSeekModel) }
     var saved by remember { mutableStateOf(false) }
     var theme by remember { mutableStateOf(settings.themeMode) }
+
+    val powerManager = remember {
+        context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    }
+    var unrestricted by remember {
+        mutableStateOf(powerManager.isIgnoringBatteryOptimizations(context.packageName))
+    }
 
     var wakeWord by remember { mutableStateOf(settings.wakeWord) }
     var wakeMsg by remember { mutableStateOf("") }
@@ -213,6 +227,56 @@ fun SettingsScreen(
             }
         }
 
+        Text(
+            text = "后台运行",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        Text(
+            text = "电池优化：${if (unrestricted) "已无限制" else "受系统限制"}" +
+                "。设为「无限制」可降低后台被系统杀掉的概率。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        OutlinedButton(
+            onClick = {
+                val intent = Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    context.startActivity(intent)
+                } catch (_: Throwable) {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("打开电池优化设置")
+        }
+
+        TextButton(
+            onClick = {
+                unrestricted = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+            }
+        ) {
+            Text("刷新状态")
+        }
+
+        OutlinedButton(
+            onClick = onOpenDiagnostics,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("🧪 查看诊断日志")
+        }
+
         Spacer(Modifier.height(8.dp))
 
         // --- 关于 ---
@@ -226,7 +290,7 @@ fun SettingsScreen(
                 InfoDivider()
                 InfoRow("对话模型", settings.deepSeekModel)
                 InfoDivider()
-                InfoRow("版本", "v1.5")
+                InfoRow("版本", "v1.6")
             }
         }
 

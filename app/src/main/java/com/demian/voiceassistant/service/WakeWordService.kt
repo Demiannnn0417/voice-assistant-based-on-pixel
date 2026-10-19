@@ -21,6 +21,7 @@ import com.demian.voiceassistant.asr.SpeechRecognizerManager
 import com.demian.voiceassistant.data.ConversationStore
 import com.demian.voiceassistant.data.NotesStore
 import com.demian.voiceassistant.data.SettingsStore
+import com.demian.voiceassistant.diag.Diag
 import com.demian.voiceassistant.feedback.Feedback
 import com.demian.voiceassistant.knowledge.KnowledgeRetriever
 import com.demian.voiceassistant.knowledge.KnowledgeStore
@@ -38,8 +39,10 @@ import kotlinx.coroutines.launch
 /**
  * 常驻前台服务：让 App 在后台/息屏也能被唤醒词唤醒。
  *
- * 流程：唤醒词检测 →（提示音/震动）→ 语音识别 → 助手回答 → 语音播报
- *      → 若开启「连续对话」则继续听下一句，否则回到唤醒监听。
+ * 稳定性设计：
+ *  - ASR / TTS 都有看门狗超时，卡住会自动兜底
+ *  - 唤醒引擎异常会自动重启（带退避）
+ *  - 记录关键事件到 [Diag]，方便真机排查
  */
 class WakeWordService : Service() {
 
@@ -55,9 +58,10 @@ class WakeWordService : Service() {
 
     private var wakeMode = false
     private var listening = false
-
-    /** 连续对话中已进行的轮数。 */
     private var turns = 0
+    private var wakeRestartAttempts = 0
+
+    private var listenWatchdog: Runnable? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -76,23 +80,37 @@ class WakeWordService : Service() {
             actions = DeviceActions(this, NotesStore(this)),
         )
         AssistantState.running.value = true
+        Diag.log("service", "created")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        val action = intent?.action
+        Diag.log("service", "onStartCommand action=$action")
+
+        if (action == ACTION_STOP) {
+            settings.wakeEnabled = false
             stopEverything()
             return START_NOT_STICKY
         }
 
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        when (intent?.action) {
+        when (action) {
             ACTION_LISTEN_NOW -> requestListen() // 保留当前 wakeMode
+
             ACTION_TEXT_COMMAND -> {
                 handleTextCommand(intent.getStringExtra(EXTRA_TEXT).orEmpty())
             }
+
+            ACTION_START_WAKE -> {
+                settings.wakeEnabled = true
+                wakeMode = true
+                startWake()
+            }
+
+            // 系统重启服务（intent 为 null）等情况：沿用上次的意图
             else -> {
                 wakeMode = true
                 startWake()
@@ -110,19 +128,38 @@ class WakeWordService : Service() {
         val word = settings.wakeWord
         AssistantState.status.value = "常驻监听中（说「$word」）"
         val keywords = PinyinKeywords.keywordsOrDefault(this, word)
+        Diag.log("wake", "start listening, word=$word")
         detector.start(
             keywords = keywords,
             onLevel = { level -> AssistantState.amplitude.value = level },
             onDetected = { keyword -> mainHandler.post { onWake(keyword) } },
+            onError = { error -> mainHandler.post { onDetectorError(error) } },
         )
     }
 
     private fun onWake(keyword: String) {
         if (!wakeMode || listening) return
+        wakeRestartAttempts = 0
+        Diag.log("wake", "detected: $keyword")
         AssistantState.status.value = "已唤醒：$keyword"
         feedback.beep()
         tts.speak("在")
         requestListen()
+    }
+
+    /** 唤醒引擎异常：退避后自动重启，避免一次异常就永久失效。 */
+    private fun onDetectorError(error: Throwable) {
+        Diag.log("wake", "detector error: ${error.message ?: error.javaClass.simpleName}")
+        if (!wakeMode || listening) return
+        wakeRestartAttempts++
+        val delayMs = (2_000L * wakeRestartAttempts).coerceAtMost(30_000L)
+        AssistantState.status.value = "唤醒引擎异常，${delayMs / 1000}s 后重试"
+        mainHandler.postDelayed({
+            if (wakeMode && !listening) {
+                Diag.log("wake", "restart attempt #$wakeRestartAttempts")
+                startWake()
+            }
+        }, delayMs)
     }
 
     // ---- 识别 ----
@@ -133,6 +170,7 @@ class WakeWordService : Service() {
         listening = true
         AssistantState.heard.value = ""
         AssistantState.status.value = if (turns > 0) "继续聆听…" else "正在聆听…"
+        Diag.log("asr", "listen start (turn=$turns)")
         asr.start(object : SpeechRecognizerManager.Callback {
             override fun onReady() {
                 AssistantState.status.value = "请说话…"
@@ -144,7 +182,9 @@ class WakeWordService : Service() {
             }
 
             override fun onFinal(text: String) {
+                cancelListenWatchdog()
                 AssistantState.heard.value = text
+                Diag.log("asr", "final: $text")
                 process(text, voice = true)
             }
 
@@ -153,6 +193,8 @@ class WakeWordService : Service() {
             }
 
             override fun onError(error: Int) {
+                cancelListenWatchdog()
+                Diag.log("asr", "error: ${describeAsrError(error)}")
                 onListenError(error)
             }
 
@@ -160,17 +202,36 @@ class WakeWordService : Service() {
                 // 后续交给 onFinal / onError
             }
         })
+        armListenWatchdog()
     }
 
     private fun onListenError(error: Int) {
         feedback.error()
         if (turns > 0) {
-            // 连续对话中没听清 → 认为对话结束
             AssistantState.status.value = "没有听清，结束对话"
         } else {
             AssistantState.status.value = "识别出错：${describeAsrError(error)}"
         }
         finishConversation()
+    }
+
+    // ---- 看门狗 ----
+
+    private fun armListenWatchdog() {
+        cancelListenWatchdog()
+        val runnable = Runnable {
+            if (listening) {
+                Diag.log("watchdog", "ASR timeout")
+                onListenError(SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
+            }
+        }
+        listenWatchdog = runnable
+        mainHandler.postDelayed(runnable, LISTEN_TIMEOUT_MS)
+    }
+
+    private fun cancelListenWatchdog() {
+        listenWatchdog?.let { mainHandler.removeCallbacks(it) }
+        listenWatchdog = null
     }
 
     // ---- 回答 ----
@@ -189,10 +250,30 @@ class WakeWordService : Service() {
 
         AssistantState.status.value = "思考中…"
         scope.launch {
+            Diag.log("agent", "request: ${text.take(60)}")
             val reply = agent.respond(text)
+            Diag.log("agent", "reply: ${reply.take(80)}")
             AssistantState.answer.value = reply
             AssistantState.status.value = "完成"
-            tts.speak(reply) {
+            speakWithWatchdog(reply, voice)
+        }
+    }
+
+    /** 播报回答；若 TTS 回调迟迟不来，看门狗兜底继续流程。 */
+    private fun speakWithWatchdog(reply: String, voice: Boolean) {
+        var handled = false
+        val timeout = Runnable {
+            if (!handled) {
+                handled = true
+                Diag.log("watchdog", "TTS timeout")
+                if (voice) onSpoken() else finishConversation()
+            }
+        }
+        mainHandler.postDelayed(timeout, TTS_TIMEOUT_MS)
+        tts.speak(reply) {
+            if (!handled) {
+                handled = true
+                mainHandler.removeCallbacks(timeout)
                 if (voice) onSpoken() else finishConversation()
             }
         }
@@ -208,6 +289,7 @@ class WakeWordService : Service() {
         listening = false
         turns = 0
         AssistantState.heard.value = text
+        Diag.log("text", "command: ${text.take(60)}")
         process(text, voice = false)
     }
 
@@ -216,14 +298,14 @@ class WakeWordService : Service() {
         listening = false
         if (wakeMode && settings.continuousConversation && turns < MAX_TURNS) {
             turns++
-            requestListen() // 自动进入下一轮
+            requestListen()
         } else {
             finishConversation()
         }
     }
 
-    /** 结束当前这轮对话，回到唤醒监听（或停止服务）。 */
     private fun finishConversation() {
+        cancelListenWatchdog()
         listening = false
         turns = 0
         AssistantState.amplitude.value = 0f
@@ -244,6 +326,7 @@ class WakeWordService : Service() {
     // ---- 生命周期 ----
 
     private fun stopEverything() {
+        cancelListenWatchdog()
         detector.stop()
         asr.destroy()
         tts.shutdown()
@@ -251,16 +334,19 @@ class WakeWordService : Service() {
         AssistantState.amplitude.value = 0f
         AssistantState.running.value = false
         AssistantState.status.value = "已停止"
+        Diag.log("service", "stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
         scope.cancel()
+        cancelListenWatchdog()
         detector.stop()
         tts.shutdown()
         feedback.release()
         AssistantState.running.value = false
+        Diag.log("service", "destroyed")
         super.onDestroy()
     }
 
@@ -321,6 +407,8 @@ class WakeWordService : Service() {
         private const val CHANNEL_ID = "wake_word_channel"
         private const val NOTIFICATION_ID = 1001
         private const val MAX_TURNS = 6
+        private const val LISTEN_TIMEOUT_MS = 30_000L
+        private const val TTS_TIMEOUT_MS = 60_000L
 
         /** 把 SpeechRecognizer 的错误码翻译成人话。 */
         private fun describeAsrError(error: Int): String = when (error) {

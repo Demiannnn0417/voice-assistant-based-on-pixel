@@ -34,6 +34,7 @@ class WakeWordDetector(private val context: Context) {
         keywords: String,
         onLevel: (Float) -> Unit,
         onDetected: (String) -> Unit,
+        onError: (Throwable) -> Unit = {},
     ) {
         if (running) return
         running = true
@@ -73,6 +74,7 @@ class WakeWordDetector(private val context: Context) {
                 stream.release()
             } catch (t: Throwable) {
                 Log.e(TAG, "唤醒词检测出错", t)
+                onError(t)
             } finally {
                 record?.let {
                     runCatching { it.stop() }
